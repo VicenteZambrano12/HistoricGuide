@@ -1,0 +1,23 @@
+.
+├── .gitignore
+├── README.md
+├── eslint.config.js
+├── index.html
+├── package-lock.json
+├── package.json
+├── project_tree.txt
+├── public
+│   ├── favicon.svg
+│   └── icons.svg
+├── src
+│   ├── App.css
+│   ├── App.jsx
+│   ├── assets
+│   │   ├── hero.png
+│   │   ├── react.svg
+│   │   └── vite.svg
+│   ├── index.css
+│   └── main.jsx
+└── vite.config.js
+
+4 directories, 17 files
