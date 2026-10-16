@@ -1,0 +1,45 @@
+.monument-art {
+  width: 100%;
+  height: 155px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  position: relative;
+  border: 1px solid var(--gold-border);
+  background: linear-gradient(180deg, #1b1610 0%, #0e0c0a 100%);
+}
+
+.monument-art__svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.monument-art__overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(11, 10, 9, 0.1) 0%, rgba(11, 10, 9, 0.85) 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 0.85rem 1rem;
+}
+
+.monument-art__era {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--gold-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.monument-art__name {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  color: var(--text-marble);
+  font-weight: 700;
+}
+
+.monument-art__sub {
+  font-size: 0.76rem;
+  color: var(--text-travertine);
+}

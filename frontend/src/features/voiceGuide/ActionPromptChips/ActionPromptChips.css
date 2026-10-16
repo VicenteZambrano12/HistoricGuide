@@ -1,0 +1,64 @@
+.action-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.action-chips__label {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.action-chips__grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+}
+
+.action-chips__btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-marble);
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.action-chips__btn:hover:not(:disabled) {
+  border-color: var(--gold-primary);
+  background: var(--bg-card-hover);
+}
+
+.action-chips__btn--primary {
+  grid-column: span 2;
+  background: linear-gradient(135deg, rgba(212, 175, 55, 0.22), rgba(212, 175, 55, 0.08));
+  border-color: var(--gold-primary);
+  color: var(--gold-primary);
+  justify-content: center;
+  font-size: 0.82rem;
+}
+
+.action-chips__btn--rag {
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.action-chips__btn--gastro {
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.action-chips__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

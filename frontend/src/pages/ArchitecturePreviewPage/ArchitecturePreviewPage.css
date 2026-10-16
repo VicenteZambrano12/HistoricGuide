@@ -1,0 +1,65 @@
+.arch-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.arch-page__hero {
+  background: var(--bg-panel);
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-lg);
+  padding: 1.4rem;
+}
+
+.arch-page__title {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  color: var(--gold-primary);
+  margin-bottom: 0.4rem;
+}
+
+.arch-page__subtitle {
+  font-size: 0.88rem;
+  color: var(--text-travertine);
+  line-height: 1.5;
+}
+
+.arch-page__screens {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 1rem;
+}
+
+.arch-page__card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.arch-page__step {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--gold-primary);
+}
+
+.arch-page__card-title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--text-marble);
+}
+
+.arch-page__card-desc {
+  font-size: 0.8rem;
+  color: var(--text-travertine);
+  line-height: 1.45;
+}
+
+.arch-page__stops-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 0.85rem;
+}

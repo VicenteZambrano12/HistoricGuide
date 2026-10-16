@@ -1,0 +1,53 @@
+.stop-timeline {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 0.6rem;
+  overflow-x: auto;
+}
+
+.stop-timeline__item {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.65rem 0.75rem;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.stop-timeline__item:hover {
+  border-color: var(--gold-primary);
+  background: var(--bg-card-hover);
+}
+
+.stop-timeline__item--active {
+  background: var(--gold-soft);
+  border-color: var(--gold-primary);
+}
+
+.stop-timeline__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--gold-primary);
+}
+
+.stop-timeline__name {
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-marble);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stop-timeline__era {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}

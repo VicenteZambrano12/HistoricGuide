@@ -1,0 +1,33 @@
+.workstation-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.workstation-page__grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 1.1rem;
+  align-items: stretch;
+}
+
+.workstation-page__left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.workstation-page--mobile {
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+.workstation-page--mobile .workstation-page__grid {
+  grid-template-columns: 1fr;
+}
+
+@media (max-width: 1024px) {
+  .workstation-page__grid {
+    grid-template-columns: 1fr;
+  }
+}
