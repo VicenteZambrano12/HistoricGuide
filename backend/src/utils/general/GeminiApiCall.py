@@ -4,6 +4,7 @@ import base64
 from binascii import Error as Base64Error
 from dataclasses import dataclass, field
 import json
+import math
 import os
 from pathlib import Path
 from typing import Literal
@@ -37,6 +38,9 @@ class GeminiClient:
     )
     max_output_tokens: int = 256
     timeout: float = 30.0
+    embedding_model: str = field(
+        default_factory=lambda: _configuration_value("EMBEDDING_MODEL", "gemini-embedding-001")
+    )
 
     def __post_init__(self) -> None:
         self.api_key = self.api_key.strip()
@@ -173,10 +177,66 @@ class GeminiClient:
             raise RuntimeError("Gemini returned no audio.")
         return b"".join(chunks), mime_type
 
+    def embed(
+        self,
+        texts: list[str],
+        *,
+        task_type: Literal["RETRIEVAL_DOCUMENT", "RETRIEVAL_QUERY"] = "RETRIEVAL_DOCUMENT",
+        titles: list[str] | None = None,
+    ) -> list[list[float]]:
+        """Embed up to 100 texts in order, using EMBEDDING_MODEL rather than LLM_MODEL."""
+        if not texts or len(texts) > 100 or any(not text.strip() for text in texts):
+            raise ValueError("Provide between 1 and 100 nonempty embedding texts.")
+        if task_type not in ("RETRIEVAL_DOCUMENT", "RETRIEVAL_QUERY"):
+            raise ValueError("Unsupported embedding task_type.")
+        if titles is not None and (
+            task_type != "RETRIEVAL_DOCUMENT"
+            or len(titles) != len(texts)
+            or any(not title.strip() for title in titles)
+        ):
+            raise ValueError("titles must match document texts and cannot be used for queries.")
+        model = self.embedding_model.strip().removeprefix("models/")
+        if not model:
+            raise ValueError("EMBEDDING_MODEL must not be empty.")
+        requests = []
+        for index, text in enumerate(texts):
+            item = {
+                "model": f"models/{model}",
+                "content": {"parts": [{"text": text}]},
+                "taskType": task_type,
+            }
+            if titles is not None:
+                item["title"] = titles[index]
+            requests.append(item)
+        result = self._request(
+            model, "batchEmbedContents", json.dumps({"requests": requests}).encode("utf-8")
+        )
+        embeddings = result.get("embeddings")
+        if not isinstance(embeddings, list) or len(embeddings) != len(texts):
+            raise RuntimeError("Gemini returned an unexpected number of embeddings.")
+        vectors: list[list[float]] = []
+        for embedding in embeddings:
+            values = embedding.get("values") if isinstance(embedding, dict) else None
+            if not isinstance(values, list) or not values or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                for value in values
+            ):
+                raise RuntimeError("Gemini returned an invalid embedding vector.")
+            vector = [float(value) for value in values]
+            if not any(vector) or (vectors and len(vector) != len(vectors[0])):
+                raise RuntimeError("Gemini returned zero or inconsistent embedding vectors.")
+            vectors.append(vector)
+        return vectors
+
     def _generate_content(self, data: bytes) -> dict:
+        return self._request(self.model, "generateContent", data)
+
+    def _request(self, model: str, action: str, data: bytes) -> dict:
         request = Request(
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{quote(self.model, safe='')}:generateContent",
+            f"{quote(model, safe='')}:{action}",
             data=data,
             headers={
                 "Content-Type": "application/json",

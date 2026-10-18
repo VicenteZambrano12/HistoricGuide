@@ -20,6 +20,64 @@ also installs automatically if needed. It writes PDFs to `rag_corpus/` and
 `public/rag_corpus/`, relative to the current working directory, and prints a
 page-count verification table.
 
+## Provisional RAG database
+
+Place PDFs under `database/docs/<stop>/<type>/*.pdf`, then run from the repository
+root:
+
+```sh
+uv run database/scripts/provisional_db_gen.py
+```
+
+Set `GEMINI_API_KEY` and `EMBEDDING_MODEL` in the root `.env` or environment.
+The embedding model defaults to `gemini-embedding-001`; it is independent of
+`LLM_MODEL`. The builder uses the existing `GeminiClient`, batches requests with
+the `RETRIEVAL_DOCUMENT` task, and sends chunk text plus stop/type context to
+Gemini. API errors are surfaced, never replaced with fake vectors.
+
+`ChunkGen` uses layout-aware PDF extraction to retain table rows, strips
+repeated page-edge headers/footers and page numbers, preserves
+Unicode, and prefers paragraph, line, sentence, then word boundaries. Defaults
+are at most 400 tokens with up to 60 tokens of word-aligned overlap. Chunks never
+cross PDF or page boundaries, preserving citations and page-level sections.
+Token counts use local `cl100k_base`, an approximation rather than Gemini's
+tokenizer; these conservative sizes leave room for metadata. Very long words
+are split at character boundaries. Scanned/empty pages require OCR and fail
+explicitly rather than disappearing from the corpus. The tokenizer data is
+downloaded on first use.
+
+The output is `database/provisional_db/chunks.sqlite3`. The `chunks` table stores
+text, `stop` and `type` (exact folder names, including `restaurants`), relative
+source path, 1-based page, 0-based per-document chunk index, token count, stable
+SHA-256 ID, embedding model, dimensions, and a JSON float-array `embedding`.
+An index supports filtering by `(stop, type)`; `build_info` records the model,
+chunking settings, corpus counts, and creation time. This is ordinary SQLite,
+not a vector-search extension. For retrieval, decode vectors with `json.loads`,
+embed queries with the same model and `task_type="RETRIEVAL_QUERY"`, and compare
+using cosine similarity after filtering by stop/type.
+
+Re-running rebuilds the entire snapshot (including removal of deleted sources)
+and atomically replaces the old file only after all embeddings and integrity
+checks succeed. Close readers before rebuilding to use the new snapshot.
+Generated databases are ignored by Git.
+
+Optional settings:
+
+```sh
+uv run database/scripts/provisional_db_gen.py \
+  --docs-dir database/docs \
+  --output database/provisional_db/chunks.sqlite3 \
+  --max-tokens 400 --overlap-tokens 60 --batch-size 32
+```
+
+Run the offline database and embedding-client tests (no API requests):
+
+```sh
+uv run --script database/scripts/provisional_db_gen.py --help
+uv run --with pypdf --with tiktoken --with python-dotenv \
+  python -m unittest discover -s database/tests
+```
+
 ## Backend API
 
 From the repository root:
@@ -33,6 +91,14 @@ uv run uvicorn src.app:app --reload
 `GET http://127.0.0.1:8000/health` returns HTTP 200 with `{"status":"ok"}`.
 This is a liveness check; it does not contact external services.
 Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
+ReDoc is available at `http://127.0.0.1:8000/redoc`, and the machine-readable
+OpenAPI schema at `http://127.0.0.1:8000/openapi.json`. Documentation includes
+request examples, JSON and WAV response formats, and applicable error responses.
+The current endpoints require no client authentication. `GEMINI_API_KEY` is
+server-side configuration, not a client credential.
+HTTP errors use a JSON `detail` string; automatic request validation uses a
+`detail` array of validation issues. Unhandled server failures return HTTP 500
+with plain text `Internal Server Error` in the default non-debug configuration.
 The route lives in `backend/src/api/Endpoint/health.py`, with its Pydantic
 response model in `backend/src/api/DataClass/health.py`.
 
@@ -75,7 +141,7 @@ curl http://127.0.0.1:8000/chat \
 Run the endpoint tests from the backend directory:
 
 ```sh
-uv run python -m unittest tests.test_chat tests.test_health
+uv run python -m unittest tests.test_chat tests.test_health tests.test_openapi
 ```
 
 ## Speech to text (Gemini)
