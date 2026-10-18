@@ -6,6 +6,13 @@ export function useGpsSimulation(initialPoint) {
   const [walkProgress, setWalkProgress] = useState(100);
   const animRef = useRef(null);
 
+  const cancelWalkSimulation = useCallback(() => {
+    if (animRef.current) cancelAnimationFrame(animRef.current);
+    animRef.current = null;
+    setIsWalking(false);
+    setWalkProgress(100);
+  }, []);
+
   const startWalkSimulation = useCallback((fromPoint, toPoint, durationMs = 2200, onNearTarget) => {
     if (animRef.current) cancelAnimationFrame(animRef.current);
 
@@ -34,6 +41,7 @@ export function useGpsSimulation(initialPoint) {
       if (t < 1) {
         animRef.current = requestAnimationFrame(step);
       } else {
+        animRef.current = null;
         setIsWalking(false);
         setWalkProgress(100);
         if (onNearTarget) onNearTarget();
@@ -54,6 +62,7 @@ export function useGpsSimulation(initialPoint) {
     setGpsPosition,
     isWalking,
     walkProgress,
+    cancelWalkSimulation,
     startWalkSimulation
   };
 }

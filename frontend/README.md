@@ -66,8 +66,12 @@ and `npm run lint` for lint checks.
 
 ## Chat
 
-Arrival overviews and the historical/restaurant quick-question buttons now call
-the backend rather than returning scripted answers. The chat has a message box,
+The transcript starts empty and clears on reset, without prefilled welcome or
+reset narration. Every guide response calls the backend, including approaching
+a stop, arrival overviews, historical/restaurant quick questions, and tour
+farewells. Navigation itself remains local; completing a simulated walk requests
+orientation for the destination in the currently selected language and voice mode.
+The chat has a message box,
 **Send**, and a **Microphone** control, with suggested questions for nearby food,
 coffee, and more history.
 Chat controls and suggestions use inline SVG icons with visible text labels,
@@ -112,9 +116,12 @@ elapsed/total time, volume, and mute controls support keyboard input and English
 and Spanish labels. This is a visual treatment only; audio generation uses the
 existing backend, not an ElevenLabs service.
 
-While requests run, the chat displays live pipeline and agent steps in the
-selected language: preparation, voice transcription (when needed), orchestration,
-source retrieval, answer generation, and speech synthesis (when needed).
+While requests run, the chat displays plain-language progress updates in English
+or Spanish under "Your guide is working on your answer": getting ready, turning
+voice messages into text (when needed), choosing how to help, looking up
+information, putting the answer together, and preparing it to play aloud (when
+needed). Technical terms such as pipeline, agent, STT, and TTS are not shown in
+these updates.
 Steps come from backend execution over a newline-delimited JSON response, not
 timers or internal model reasoning. The current step is highlighted and previous
 steps remain visible until the answer arrives. Proxies must disable buffering
@@ -122,7 +129,9 @@ for `application/x-ndjson` responses.
 Errors and interrupted streams are shown without falling back to demo answers.
 Chat times out after two minutes. Changing stops, finishing, or resetting the
 tour cancels a pending client request, and late responses are not added to the
-transcript. Cancellation does not guarantee the server stops an in-flight
+transcript. Resetting also cancels a simulated walk so it cannot send a stale
+arrival request. Finishing requests a new backend-generated closing response.
+Cancellation does not guarantee the server stops an in-flight
 generation or avoids provider charges.
 
 Backend chat requires server-side Gemini configuration and a matching RAG

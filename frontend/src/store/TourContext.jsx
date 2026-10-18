@@ -42,32 +42,21 @@ export function TourProvider({ children }) {
 
   useEffect(() => () => chatRequest.current?.abort(), []);
 
-  const [messages, setMessages] = useState([
-    {
-      id: 'init-msg',
-      sender: 'Plinius',
-      tag: 'PERIPATETIC GPS GUIDE',
-      timestamp: '09:30 AM',
-      text: { key: 'initialMessage', stopId: ROME_STOPS[0].id }
-    }
-  ]);
+  const [messages, setMessages] = useState([]);
 
   const [ragTelemetry, setRagTelemetry] = useState(() =>
     buildRagTelemetry(ROME_STOPS[0], 'OVERVIEW')
   );
 
-  const { audioEnabled, isSpeaking, speakText, stopSpeech, toggleAudio: toggleSpeechAudio } =
+  const { audioEnabled, isSpeaking, stopSpeech, toggleAudio: toggleSpeechAudio } =
     useSpeechSynthesis(language);
-  const narrationRef = useRef({ speakText, resolveMessage });
-  useEffect(() => {
-    narrationRef.current = { speakText, resolveMessage };
-  }, [speakText, resolveMessage]);
 
   const {
     gpsPosition,
     setGpsPosition,
     isWalking,
     walkProgress,
+    cancelWalkSimulation,
     startWalkSimulation
   } = useGpsSimulation(ROME_STOPS[0].coords);
 
@@ -110,7 +99,9 @@ export function TourProvider({ children }) {
     });
   }, [language, cancelChat, stopSpeech]);
 
-  const sendChat = useCallback(async ({ query, mode = audioEnabled ? 'tts' : 'text', requestType }) => {
+  const sendChat = useCallback(async ({
+    query, mode = audioEnabled ? 'tts' : 'text', requestType, stop = currentStop.apiStop
+  }) => {
     if (chatRequest.current) return false;
     const controller = new AbortController();
     chatRequest.current = controller;
@@ -129,7 +120,7 @@ export function TourProvider({ children }) {
 
     try {
       const result = await sendChatRequest({
-        stop: currentStop.apiStop,
+        stop,
         requestType,
         mode,
         query,
@@ -163,6 +154,15 @@ export function TourProvider({ children }) {
     }
   }, [currentStop, appendMessage, audioEnabled, stopSpeech, language, t]);
 
+  const approachRef = useRef(null);
+  useEffect(() => {
+    approachRef.current = (targetIdx) => sendChat({
+      stop: stops[targetIdx].apiStop,
+      query: t('approachingQuery', { name: stops[targetIdx].name }),
+      requestType: 'historic'
+    });
+  }, [sendChat, stops, t]);
+
   const walkToStopIndex = useCallback(
     (targetIdx) => {
       if (targetIdx < 0 || targetIdx >= ROME_STOPS.length) return;
@@ -182,10 +182,7 @@ export function TourProvider({ children }) {
 
       startWalkSimulation(fromCoords, targetStop.coords, 2000, () => {
         setTourPhase('READY_TO_ARRIVE');
-        const arrivalPrompt = { key: 'approachingMessage', stopId: targetStop.id };
-        appendMessage('Plinius', arrivalPrompt, 'GPS PROXIMITY ALERT');
-        const narration = narrationRef.current;
-        narration.speakText(narration.resolveMessage(arrivalPrompt));
+        void approachRef.current(targetIdx);
       });
     },
     [gpsPosition, currentStop, stopSpeech, appendMessage, startWalkSimulation, cancelChat, stops]
@@ -237,38 +234,30 @@ export function TourProvider({ children }) {
     } else {
       cancelChat();
       setTourPhase('TOUR_COMPLETED');
-      const farewell = { key: 'farewell' };
-      appendMessage('Plinius', farewell, 'TOUR COMPLETED');
-      speakText(resolveMessage(farewell));
+      void sendChat({ query: t('farewellQuery'), requestType: 'historic' });
     }
-  }, [currentStopIndex, walkToStopIndex, appendMessage, speakText, cancelChat, resolveMessage]);
+  }, [currentStopIndex, walkToStopIndex, cancelChat, sendChat, t]);
 
   const finishTour = useCallback(() => {
     cancelChat();
+    cancelWalkSimulation();
     setTourPhase('TOUR_COMPLETED');
-    const summaryText = { key: 'finishMessage', stopId: currentStop.id };
-    appendMessage('USER', { key: 'finishIntent' }, 'VOICE INTENT');
-    appendMessage('Plinius', summaryText, 'SESSION ENDED');
-    speakText(resolveMessage(summaryText));
-  }, [currentStop, appendMessage, speakText, cancelChat, resolveMessage]);
+    void sendChat({
+      query: t('finishQuery', { name: currentStop.name }),
+      requestType: 'historic'
+    });
+  }, [currentStop, sendChat, cancelChat, cancelWalkSimulation, t]);
 
   const resetTour = useCallback(() => {
     cancelChat();
+    cancelWalkSimulation();
     stopSpeech();
     setCurrentStopIndex(0);
     setGpsPosition(ROME_STOPS[0].coords);
     setTourPhase('READY_TO_ARRIVE');
     setRagTelemetry(buildRagTelemetry(ROME_STOPS[0], 'OVERVIEW'));
-    setMessages([
-      {
-        id: `reset_${Date.now()}`,
-        sender: 'Plinius',
-        tag: 'PERIPATETIC GPS GUIDE',
-        timestamp: '09:30 AM',
-        text: { key: 'resetMessage', stopId: ROME_STOPS[0].id }
-      }
-    ]);
-  }, [stopSpeech, setGpsPosition, cancelChat]);
+    setMessages([]);
+  }, [stopSpeech, setGpsPosition, cancelChat, cancelWalkSimulation]);
 
   return (
     <TourContext.Provider

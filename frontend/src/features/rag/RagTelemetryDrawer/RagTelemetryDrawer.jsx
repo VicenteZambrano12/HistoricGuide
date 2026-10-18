@@ -37,7 +37,7 @@ export function RagTelemetryDrawer() {
                   title={t('openSourcePdf', { page: source.page })}
                 >
                   <span className="rag-drawer__filename">{source.source.split('/').at(-1)}</span>
-                  <span className="rag-drawer__page">{t('sourcePage', { page: source.page })} &nearr;</span>
+                  <span className="rag-drawer__page">{t('sourcePage', { page: source.page })} &#8599;</span>
                 </a>
               </li>
             ))}

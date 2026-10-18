@@ -40,6 +40,43 @@ test('all tour stop display fields are translated and English preserves existing
   }
 });
 
+test('guide progress uses plain language instead of technical labels in both languages', () => {
+  const keys = [
+    'pipelineProgress', 'progress_sending', 'progress_starting', 'progress_transcribing',
+    'progress_routing', 'progress_retrieving', 'progress_generating', 'progress_synthesizing'
+  ];
+  for (const language of ['en', 'es']) {
+    const t = getTranslator(language);
+    for (const key of keys) {
+      assert.doesNotMatch(
+        t(key),
+        /\b(pipeline|STT|TTS|orchestrator|orquestador|agent|agente)\b/i,
+        `${language}.${key}`
+      );
+    }
+  }
+});
+
+test('stop data and translations do not include canned guide narration', () => {
+  for (const stop of ROME_STOPS) {
+    assert.equal(Object.hasOwn(stop, 'overviewSpeech'), false);
+    assert.equal(Object.hasOwn(stop.historicalRag, 'answerSpeech'), false);
+    assert.equal(Object.hasOwn(stop.gastroRag, 'answerSpeech'), false);
+  }
+  for (const language of ['en', 'es']) {
+    const dictionary = TRANSLATIONS[language];
+    for (const key of ['initialMessage', 'resetMessage', 'approachingMessage', 'farewell', 'finishMessage']) {
+      assert.equal(Object.hasOwn(dictionary, key), false, `${language}.${key}`);
+    }
+    const t = getTranslator(language);
+    const name = dictionary.stops[ROME_STOPS[0].id].name;
+    for (const key of ['approachingQuery', 'arrivalQuery', 'finishQuery']) {
+      assert.ok(t(key, { name }).includes(name), `${language}.${key}`);
+    }
+    assert.ok(t('farewellQuery').trim());
+  }
+});
+
 test('interpolates dictionary strings and rejects missing keys, values, and unsupported languages', () => {
   const t = getTranslator('es');
   assert.equal(t('currentStop', { order: 2, era: 'República' }),
