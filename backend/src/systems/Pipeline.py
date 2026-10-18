@@ -7,6 +7,7 @@ from src.systems.AgentSystem.AgentPipeline.AgentPipeline import AgentPipeline
 from src.systems.STT.STT import STT
 from src.systems.TTS.TTS import TTS
 from src.utils.AgentSystem.ResponseGenerator.dataclasses.types import Language
+from src.utils.AgentSystem.Orchestrator.dataclasses.types import Category
 from src.utils.Pipeline.dataclasses.types import PipelineMode
 from src.utils.Pipeline.run import run
 
@@ -27,6 +28,7 @@ class Pipeline:
         voice: str = "Kore",
         context: list[str] | None = None,
         language: Language = "en",
+        request_type: Category | None = None,
     ) -> str | bytes:
         """Return answer text or WAV bytes; all modes include the agents."""
         return run(
@@ -38,4 +40,5 @@ class Pipeline:
             voice=voice,
             context=context,
             language=language,
+            request_type=request_type,
         )

@@ -14,7 +14,9 @@ from src.utils.general.GeminiApiCall import GeminiClient
 
 class STTTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.stt = STT(client=GeminiClient(api_key="test-key", max_output_tokens=8192))
+        self.stt = STT(client=GeminiClient(
+            api_key="test-key", model="gemini-3.5-flash-lite", max_output_tokens=8192,
+        ))
         self.response = {
             "candidates": [{
                 "finishReason": "STOP",
@@ -34,7 +36,7 @@ class STTTests(unittest.TestCase):
         )
         request = urlopen.call_args.args[0]
         payload = json.loads(request.data)
-        self.assertIn("gemini-2.5-flash-lite:generateContent", request.full_url)
+        self.assertIn("gemini-3.5-flash-lite:generateContent", request.full_url)
         self.assertEqual(request.get_header("X-goog-api-key"), "test-key")
         self.assertEqual(payload["contents"][0]["parts"][1]["inlineData"], {
             "mimeType": "audio/webm",
@@ -139,7 +141,7 @@ class STTTests(unittest.TestCase):
         config.return_value = "configured-key"
         stt = STT()
         self.assertEqual(stt.client.api_key, "configured-key")
-        self.assertEqual(stt.client.model, "gemini-2.5-flash-lite")
+        self.assertEqual(stt.client.model, "gemini-3.5-flash-lite")
         self.assertEqual(stt.client.max_output_tokens, 8192)
         self.assertEqual(stt.client.timeout, 120.0)
 

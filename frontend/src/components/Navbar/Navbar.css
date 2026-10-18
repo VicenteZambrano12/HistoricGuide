@@ -19,20 +19,13 @@
   gap: 0.85rem;
 }
 
-.navbar__seal {
+.navbar__logo {
   width: 40px;
   height: 40px;
+  flex-shrink: 0;
+  object-fit: contain;
   border-radius: 10px;
-  background: linear-gradient(135deg, #2b2112, #15120d);
   border: 1px solid var(--gold-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--gold-primary);
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 0.8rem;
-  letter-spacing: 0.06em;
   box-shadow: 0 0 18px rgba(212, 175, 55, 0.2);
 }
 
@@ -45,17 +38,6 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-}
-
-.navbar__badge {
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  background: var(--crimson-soft);
-  border: 1px solid var(--crimson-imperial);
-  color: #fca5a5;
-  letter-spacing: 0.04em;
 }
 
 .navbar__subtitle {
@@ -99,5 +81,5 @@
 .navbar__btn--audio-on {
   background: var(--emerald-soft);
   border-color: var(--emerald-rag);
-  color: #6ee7b7;
+  color: var(--text-success);
 }

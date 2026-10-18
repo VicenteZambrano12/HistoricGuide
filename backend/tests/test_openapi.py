@@ -87,6 +87,8 @@ class OpenAPITests(unittest.TestCase):
             model["properties"]["mode"]["enum"], ["stt", "tts", "full", "text"],
         )
         self.assertEqual(model["properties"]["language"]["enum"], ["ES", "EN"])
+        topic = model["properties"]["request_type"]
+        self.assertEqual(topic["anyOf"][0]["enum"], ["historic", "restaurant"])
 
     def test_model_examples_are_complete_and_valid(self) -> None:
         for model in (

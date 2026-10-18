@@ -51,6 +51,11 @@ class GeminiClient:
         self.model = self.model.strip()
         if not self.model:
             raise ValueError("model (LLM_MODEL) must not be empty.")
+        if any(character.isspace() for character in self.model):
+            raise ValueError(
+                "model (LLM_MODEL) must be a model ID without whitespace, "
+                "for example gemini-3.5-flash-lite. Check .env and the environment."
+            )
         if self.max_output_tokens <= 0 or self.timeout <= 0:
             raise ValueError("max_output_tokens and timeout must be positive.")
 

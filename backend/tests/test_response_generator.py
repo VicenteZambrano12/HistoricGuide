@@ -19,6 +19,9 @@ UTILS = "src.utils.AgentSystem.ResponseGenerator"
 class ResponseGeneratorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.generator = ResponseGenerator(client=GeminiClient(api_key="test-key"))
+        retrieval_patch = patch(f"{UTILS}.generate_response.retrieve_chunks", return_value=[])
+        self.retrieval = retrieval_patch.start()
+        self.addCleanup(retrieval_patch.stop)
 
     def api_response(self, text: str) -> BytesIO:
         return BytesIO(json.dumps({
@@ -102,6 +105,32 @@ class ResponseGeneratorTests(unittest.TestCase):
             chunks,
         )
 
+    @patch("src.utils.general.GeminiApiCall.urlopen")
+    def test_retrieved_chunks_are_added_to_context_without_mutating_input(self, urlopen) -> None:
+        self.retrieval.return_value = ["First retrieved fact.", "Second retrieved fact."]
+        chunks = ["Caller-supplied fact."]
+        urlopen.return_value = self.api_response("A grounded answer.")
+        self.generator.generate(
+            " Pantheon ", "historic", user_query=" Explain the dome. ",
+            context=chunks, language="es",
+        )
+        self.retrieval.assert_called_once_with(
+            self.generator.client, "Pantheon", "historic",
+            user_query="Explain the dome.", database_path=self.generator.database_path,
+        )
+        payload = json.loads(urlopen.call_args.args[0].data)
+        data = json.loads(payload["contents"][0]["parts"][0]["text"])
+        self.assertEqual(data["context"], chunks + self.retrieval.return_value)
+        self.assertEqual(data["language"], "es")
+        self.assertEqual(chunks, ["Caller-supplied fact."])
+
+    @patch("src.utils.general.GeminiApiCall.urlopen")
+    def test_retrieval_failure_stops_generation(self, urlopen) -> None:
+        self.retrieval.side_effect = RuntimeError("Retrieval failed")
+        with self.assertRaisesRegex(RuntimeError, "Retrieval failed"):
+            self.generator.generate("Pantheon", "historic")
+        urlopen.assert_not_called()
+
     @patch(f"{UTILS}.generate_response.GeminiClient")
     @patch("src.utils.general.GeminiApiCall.urlopen")
     def test_default_client_is_lazy_and_reused(self, urlopen, client) -> None:
@@ -138,6 +167,7 @@ class ResponseGeneratorTests(unittest.TestCase):
                     ResponseGenerator().generate(**kwargs)
         client.assert_not_called()
         urlopen.assert_not_called()
+        self.retrieval.assert_not_called()
 
     @patch(f"{UTILS}.load_prompt.PROMPT_DIRECTORY")
     @patch("src.utils.general.GeminiApiCall.urlopen")

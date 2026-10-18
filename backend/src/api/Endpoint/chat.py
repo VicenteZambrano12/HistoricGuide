@@ -1,13 +1,16 @@
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile, status
 
 from src.api.DataClass.chat import ChatLanguage, ChatMode, ChatResponse
 from src.api.DataClass.errors import HTTPErrorResponse, RequestValidationErrorResponse
+from src.api.Endpoint.chat_stream import stream_chat
 from src.systems.Pipeline import Pipeline
-from src.utils.AgentSystem.Orchestrator.dataclasses.types import NonEmptyText
+from src.utils.AgentSystem.Orchestrator.dataclasses.types import Category, NonEmptyText
 from src.utils.AgentSystem.ResponseGenerator.dataclasses.types import Language
 from src.utils.Pipeline.dataclasses.types import PipelineMode
+from src.utils.general.sources import collecting_sources
 
 
 router = APIRouter(tags=["chat"])
@@ -27,6 +30,7 @@ MAX_AUDIO_BYTES = 14_000_000
     summary="Generate a tour guide answer",
     status_code=status.HTTP_200_OK,
     response_model=ChatResponse,
+    response_model_exclude_defaults=True,
     response_description="Guide answer as JSON for text/stt or WAV audio for tts/full.",
     responses={
         status.HTTP_200_OK: {
@@ -37,6 +41,11 @@ MAX_AUDIO_BYTES = 14_000_000
                     },
                 },
                 "audio/wav": {"schema": {"type": "string", "format": "binary"}},
+                "application/x-ndjson": {
+                    "schema": {"type": "string"},
+                    "example": '{"type":"progress","step":"routing"}\n'
+                               '{"type":"result","text":"Guide answer."}\n',
+                },
             },
         },
         status.HTTP_400_BAD_REQUEST: {
@@ -110,13 +119,25 @@ def chat(
         description="Nonempty tour-stop name used to contextualize the guide's answer.",
         examples=["Pantheon"],
     )],
+    request_type: Annotated[Category | None, Form(
+        description=(
+            "Explicit topic: historic or restaurant. Omit to classify the query automatically."
+        ),
+        examples=["historic"],
+    )] = None,
+    stream: Annotated[bool, Form(
+        description="Stream NDJSON progress events followed by a result or error event.",
+        examples=[True],
+    )] = False,
 ) -> ChatResponse | Response:
     """Answer a historical or restaurant question about a tour stop.
 
     **Permissions:** Public; no client credentials are required. The server
     requires a configured `GEMINI_API_KEY`.
 
-    Submit **multipart/form-data** with all four fields. `text` and `tts`
+    Submit **multipart/form-data** with query, mode, language, and stop.
+    Optionally select `request_type` (historic or restaurant) to bypass automatic
+    topic classification. `text` and `tts`
     require nonblank text; `stt` and `full` require a nonempty uploaded file
     declaring an `audio/*` MIME type, limited to 14,000,000 bytes inclusive.
     The stop must contain non-whitespace text and the language must be `EN`
@@ -127,7 +148,13 @@ def chat(
     raw transcription. `tts` and `full` synthesize the answer as `audio/wav`.
 
     **Side effects:** Processing invokes external Gemini services and may incur
-    provider usage charges. This is a synchronous, non-streaming operation.
+    provider usage charges. By default this is a synchronous operation.
+    Set `stream=true` for newline-delimited JSON progress events, followed by
+    a result containing `text` or base64 `audio` with `mime_type=audio/wav`.
+    Results include `sources` with PDF paths relative to the document corpus and
+    one-based page numbers. Non-streaming WAV replies carry the same references
+    as JSON in the `X-PDF-Sources` header. Open PDFs through `/documents/{source}`.
+    Processing failures after streaming begins produce an explicit `error` event.
     Invalid input is rejected before the pipeline is constructed; unhandled
     pipeline failures propagate as server errors.
     """
@@ -149,17 +176,27 @@ def chat(
             raise HTTPException(422, "text and tts modes require nonempty text.")
         data = query
 
-    result = Pipeline().run(
-        data,
-        PIPELINE_MODES[mode],
-        stop=stop,
-        mime_type=mime_type,
-        language=PIPELINE_LANGUAGES[language],
-    )
+    def run_pipeline() -> str | bytes:
+        return Pipeline().run(
+            data,
+            PIPELINE_MODES[mode],
+            stop=stop,
+            mime_type=mime_type,
+            language=PIPELINE_LANGUAGES[language],
+            request_type=request_type,
+        )
+
+    if stream:
+        return stream_chat(run_pipeline, audio_output=mode in ("tts", "full"))
+    with collecting_sources() as sources:
+        result = run_pipeline()
     if mode in ("tts", "full"):
         if not isinstance(result, bytes):
             raise TypeError("The pipeline must return WAV bytes for tts and full modes.")
-        return Response(content=result, media_type="audio/wav")
+        return Response(
+            content=result, media_type="audio/wav",
+            headers={"X-PDF-Sources": json.dumps([source.model_dump() for source in sources])},
+        )
     if not isinstance(result, str):
         raise TypeError("The pipeline must return text for text and stt modes.")
-    return ChatResponse(text=result)
+    return ChatResponse(text=result, sources=sources)

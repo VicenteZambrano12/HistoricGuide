@@ -1,29 +1,29 @@
-import React from 'react';
 import { useTour } from '../../store/TourContext';
 import './Navbar.css';
 
-export function Navbar() {
+export function Navbar({ theme, onToggleTheme }) {
   const {
-    activePage,
-    setActivePage,
-    layoutMode,
-    setLayoutMode,
     audioEnabled,
     toggleAudio,
-    resetTour
+    isChatPending,
+    isWalking,
+    isVoiceRecording,
+    resetTour,
+    language,
+    toggleLanguage,
+    t
   } = useTour();
 
   return (
     <header className="navbar">
       <div className="navbar__brand">
-        <div className="navbar__seal">SPQR</div>
+        <img className="navbar__logo" src="/logo.jpeg" alt={t('logoAlt')} width="40" height="40" />
         <div>
           <div className="navbar__title">
-            AURELIUS
-            <span className="navbar__badge">VOICE AI + QDRANT RAG</span>
+            Plinius
           </div>
           <p className="navbar__subtitle">
-            Peripatetic Ancient Rome Historian • Republic &amp; Empire Interactive Portfolio Demo
+            {t('appTagline')}
           </p>
         </div>
       </div>
@@ -31,43 +31,41 @@ export function Navbar() {
       <div className="navbar__controls">
         <button
           type="button"
-          className={`navbar__btn ${activePage === 'WORKSTATION' ? 'navbar__btn--active' : ''}`}
-          onClick={() => setActivePage('WORKSTATION')}
+          className="navbar__btn"
+          aria-label={t('languageToggle')}
+          title={t('languageToggle')}
+          onClick={toggleLanguage}
         >
-          🧭 Live Rome Tour
+          <span lang="en">EN</span>
+          <span aria-hidden="true">/</span>
+          <span lang="es">ES</span>
+          <span aria-hidden="true">({language.toUpperCase()})</span>
+        </button>
+        <button
+          type="button"
+          className="navbar__btn"
+          aria-label={t('lightMode')}
+          aria-pressed={theme === 'light'}
+          title={t(theme === 'dark' ? 'switchToLight' : 'switchToDark')}
+          onClick={onToggleTheme}
+        >
+          <span aria-hidden="true">{theme === 'dark' ? '☀' : '☾'}</span>
+          {t(theme === 'dark' ? 'lightMode' : 'darkMode')}
         </button>
 
         <button
           type="button"
-          className={`navbar__btn ${activePage === 'ARCHITECTURE' ? 'navbar__btn--active' : ''}`}
-          onClick={() => setActivePage('ARCHITECTURE')}
+          className={`navbar__btn ${audioEnabled ? 'navbar__btn--audio-on' : ''}`}
+          onClick={toggleAudio}
+          aria-pressed={audioEnabled}
+          disabled={isChatPending || isWalking || isVoiceRecording}
         >
-          🖼️ UI Screens &amp; Architecture
+          {t(audioEnabled ? 'voiceOn' : 'voiceOff')}
         </button>
 
-        {activePage === 'WORKSTATION' && (
-          <>
-            <button
-              type="button"
-              className={`navbar__btn ${layoutMode === 'SPLIT' ? 'navbar__btn--active' : ''}`}
-              onClick={() => setLayoutMode(layoutMode === 'SPLIT' ? 'MOBILE' : 'SPLIT')}
-            >
-              {layoutMode === 'SPLIT' ? '📱 Switch to Mobile Frame' : '🖥️ Switch to Split Workstation'}
-            </button>
-
-            <button
-              type="button"
-              className={`navbar__btn ${audioEnabled ? 'navbar__btn--audio-on' : ''}`}
-              onClick={toggleAudio}
-            >
-              {audioEnabled ? '🔊 Real Voice TTS: ON' : '🔇 Enable Real Voice TTS'}
-            </button>
-
-            <button type="button" className="navbar__btn" onClick={resetTour}>
-              ↺ Reset Walk
-            </button>
-          </>
-        )}
+        <button type="button" className="navbar__btn" onClick={resetTour}>
+          {t('resetWalk')}
+        </button>
       </div>
     </header>
   );

@@ -1,27 +1,54 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { ROME_STOPS } from '../lib/romeStopsData';
 import { buildRagTelemetry } from '../lib/ragEngine';
 import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis';
 import { useGpsSimulation } from '../hooks/useGpsSimulation';
+import { sendChatRequest } from '../lib/api';
+import { TRANSLATIONS, getTranslator, getSavedLanguage, saveLanguage } from '../i18n/translations';
 
 const TourContext = createContext(null);
 
 export function TourProvider({ children }) {
-  const [activePage, setActivePage] = useState('WORKSTATION'); // 'WORKSTATION' | 'ARCHITECTURE'
+  const [language, setLanguage] = useState(() => getSavedLanguage({
+    getItem: (key) => window.localStorage.getItem(key)
+  }));
+  const t = useMemo(() => getTranslator(language), [language]);
+  const stops = useMemo(() => ROME_STOPS.map((stop) => ({
+    ...stop,
+    ...TRANSLATIONS[language].stops[stop.id]
+  })), [language]);
+  const resolveMessage = useCallback((text) => typeof text === 'string' ? text : t(text.key, {
+    ...TRANSLATIONS[language].stops[text.stopId],
+    ...text.values
+  }), [language, t]);
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
+
   const [layoutMode, setLayoutMode] = useState('SPLIT'); // 'SPLIT' | 'MOBILE'
   const [currentStopIndex, setCurrentStopIndex] = useState(0);
   // Phases: 'WALKING_TO_STOP' | 'READY_TO_ARRIVE' | 'ARRIVED_OVERVIEW' | 'HISTORICAL_RAG' | 'GASTRO_RAG' | 'TOUR_COMPLETED'
   const [tourPhase, setTourPhase] = useState('READY_TO_ARRIVE');
 
-  const currentStop = ROME_STOPS[currentStopIndex];
+  const currentStop = stops[currentStopIndex];
+  const chatRequest = useRef(null);
+  const [isChatPending, setIsChatPending] = useState(false);
+  const [chatProgress, setChatProgress] = useState([]);
+  const [chatSources, setChatSources] = useState([]);
+  const [chatError, setChatError] = useState(null);
+  const [chatSessionId, setChatSessionId] = useState(0);
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+
+  useEffect(() => () => chatRequest.current?.abort(), []);
 
   const [messages, setMessages] = useState([
     {
       id: 'init-msg',
-      sender: 'AURELIUS',
+      sender: 'Plinius',
       tag: 'PERIPATETIC GPS GUIDE',
       timestamp: '09:30 AM',
-      text: `Salve! We are walking through the Campus Martius toward Stop #1: ${ROME_STOPS[0].name} (${ROME_STOPS[0].era}). Tap "Simulate 'I Have Arrived'" as soon as you reach the monument perimeter.`
+      text: { key: 'initialMessage', stopId: ROME_STOPS[0].id }
     }
   ]);
 
@@ -29,8 +56,12 @@ export function TourProvider({ children }) {
     buildRagTelemetry(ROME_STOPS[0], 'OVERVIEW')
   );
 
-  const { audioEnabled, isSpeaking, speakText, stopSpeech, toggleAudio } =
-    useSpeechSynthesis();
+  const { audioEnabled, isSpeaking, speakText, stopSpeech, toggleAudio: toggleSpeechAudio } =
+    useSpeechSynthesis(language);
+  const narrationRef = useRef({ speakText, resolveMessage });
+  useEffect(() => {
+    narrationRef.current = { speakText, resolveMessage };
+  }, [speakText, resolveMessage]);
 
   const {
     gpsPosition,
@@ -40,7 +71,7 @@ export function TourProvider({ children }) {
     startWalkSimulation
   } = useGpsSimulation(ROME_STOPS[0].coords);
 
-  const appendMessage = useCallback((sender, text, tag = '') => {
+  const appendMessage = useCallback((sender, text, tag = '', audio = null, autoPlay = false) => {
     const now = new Date().toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit'
@@ -51,112 +82,178 @@ export function TourProvider({ children }) {
         id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         sender,
         tag,
+        audio,
+        autoPlay,
         timestamp: now,
         text
       }
     ]);
   }, []);
 
+  const cancelChat = useCallback(() => {
+    chatRequest.current?.abort();
+    chatRequest.current = null;
+    setIsChatPending(false);
+    setChatProgress([]);
+    setChatSources([]);
+    setChatError(null);
+    setChatSessionId((previous) => previous + 1);
+  }, []);
+
+  const toggleLanguage = useCallback(() => {
+    const nextLanguage = language === 'en' ? 'es' : 'en';
+    cancelChat();
+    stopSpeech();
+    setLanguage(nextLanguage);
+    saveLanguage(nextLanguage, {
+      setItem: (key, value) => window.localStorage.setItem(key, value)
+    });
+  }, [language, cancelChat, stopSpeech]);
+
+  const sendChat = useCallback(async ({ query, mode = audioEnabled ? 'tts' : 'text', requestType }) => {
+    if (chatRequest.current) return false;
+    const controller = new AbortController();
+    chatRequest.current = controller;
+    setIsChatPending(true);
+    setChatProgress([]);
+    setChatSources([]);
+    setChatError(null);
+    stopSpeech();
+    appendMessage(
+      'USER',
+      typeof query === 'string' ? query : {
+        key: 'audioQuestion', values: { name: query?.name || t('recordingName') }
+      },
+      `${(requestType || 'auto').toUpperCase()} / ${mode.toUpperCase()} / ${language.toUpperCase()}`
+    );
+
+    try {
+      const result = await sendChatRequest({
+        stop: currentStop.apiStop,
+        requestType,
+        mode,
+        query,
+        language: language.toUpperCase(),
+        onProgress: (step) => {
+          if (chatRequest.current === controller && !controller.signal.aborted) {
+            setChatProgress((previous) => previous.includes(step) ? previous : [...previous, step]);
+          }
+        }
+      }, controller.signal);
+      if (controller.signal.aborted) return false;
+      setChatSources(result.sources ?? []);
+      if (result.audio) {
+        appendMessage('Plinius', { key: 'audioAnswer' }, `BACKEND / ${language.toUpperCase()}`, result.audio, mode === 'tts');
+      } else {
+        appendMessage('Plinius', result.text, `BACKEND / ${language.toUpperCase()}`);
+      }
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setChatError(error instanceof TypeError || error.name === 'TimeoutError' || error instanceof SyntaxError
+          ? t('chatConnectionError', { detail: error.message }) : error.message);
+      }
+      return false;
+    } finally {
+      if (chatRequest.current === controller) {
+        chatRequest.current = null;
+        setIsChatPending(false);
+        setChatProgress([]);
+      }
+    }
+  }, [currentStop, appendMessage, audioEnabled, stopSpeech, language, t]);
+
   const walkToStopIndex = useCallback(
     (targetIdx) => {
       if (targetIdx < 0 || targetIdx >= ROME_STOPS.length) return;
-      const targetStop = ROME_STOPS[targetIdx];
+      const targetStop = stops[targetIdx];
       const fromCoords = gpsPosition || currentStop.coords;
 
+      cancelChat();
       stopSpeech();
       setCurrentStopIndex(targetIdx);
       setTourPhase('WALKING_TO_STOP');
 
       appendMessage(
         'USER',
-        `🎙️ "Let's walk to Stop #${targetStop.order}: ${targetStop.name}."`,
+        { key: 'walkMessage', stopId: targetStop.id, values: { order: targetStop.order } },
         'VOICE INTENT'
       );
 
       startWalkSimulation(fromCoords, targetStop.coords, 2000, () => {
         setTourPhase('READY_TO_ARRIVE');
-        const arrivalPrompt = `You are now approaching ${targetStop.name} (${targetStop.era}). Let me know when you've arrived at the monument to begin the overview.`;
-        appendMessage('AURELIUS', arrivalPrompt, 'GPS PROXIMITY ALERT');
-        speakText(arrivalPrompt);
+        const arrivalPrompt = { key: 'approachingMessage', stopId: targetStop.id };
+        appendMessage('Plinius', arrivalPrompt, 'GPS PROXIMITY ALERT');
+        const narration = narrationRef.current;
+        narration.speakText(narration.resolveMessage(arrivalPrompt));
       });
     },
-    [gpsPosition, currentStop, stopSpeech, appendMessage, startWalkSimulation, speakText]
+    [gpsPosition, currentStop, stopSpeech, appendMessage, startWalkSimulation, cancelChat, stops]
   );
 
   const confirmArrivalAtStop = useCallback(() => {
+    if (chatRequest.current || isWalking || isVoiceRecording) return;
     setGpsPosition(currentStop.coords);
     setTourPhase('ARRIVED_OVERVIEW');
     setRagTelemetry(buildRagTelemetry(currentStop, 'OVERVIEW'));
 
-    appendMessage(
-      'USER',
-      `🎙️ "I've arrived at ${currentStop.name}."`,
-      'GPS ARRIVAL TRIGGER'
-    );
-    appendMessage(
-      'AURELIUS',
-      currentStop.overviewSpeech,
-      `MONUMENT OVERVIEW • ${currentStop.era}`
-    );
-    speakText(currentStop.overviewSpeech);
-  }, [currentStop, setGpsPosition, appendMessage, speakText]);
+    void sendChat({
+      query: t('arrivalQuery', { name: currentStop.name }),
+      requestType: 'historic'
+    });
+  }, [currentStop, setGpsPosition, sendChat, isWalking, isVoiceRecording, t]);
+
+  const toggleAudio = useCallback(() => {
+    if (chatRequest.current || isWalking || isVoiceRecording) return;
+    toggleSpeechAudio();
+  }, [toggleSpeechAudio, isWalking, isVoiceRecording]);
 
   const askHistoricalRag = useCallback(() => {
+    if (chatRequest.current) return;
     setTourPhase('HISTORICAL_RAG');
     setRagTelemetry(buildRagTelemetry(currentStop, 'HISTORICAL'));
 
-    appendMessage(
-      'USER',
-      '🎙️ "Tell me more historical and cultural details about this monument."',
-      'RAG QUERY: CLASSICAL HISTORY'
-    );
-    appendMessage(
-      'AURELIUS',
-      currentStop.historicalRag.answerSpeech,
-      `QDRANT VECTOR RAG • ${currentStop.historicalRag.latencyMs}ms`
-    );
-    speakText(currentStop.historicalRag.answerSpeech);
-  }, [currentStop, appendMessage, speakText]);
+    void sendChat({
+      query: t('historyQuery'),
+      requestType: 'historic'
+    });
+  }, [currentStop, sendChat, t]);
 
-  const askGastroRag = useCallback(() => {
+  const askGastroRag = useCallback((query = t('foodQuery')) => {
+    if (chatRequest.current) return;
     setTourPhase('GASTRO_RAG');
     setRagTelemetry(buildRagTelemetry(currentStop, 'GASTRO'));
 
-    appendMessage(
-      'USER',
-      '🎙️ "Where can I get a great coffee or traditional Roman food nearby?"',
-      'RAG QUERY: GEO-GASTRONOMY'
-    );
-    appendMessage(
-      'AURELIUS',
-      currentStop.gastroRag.answerSpeech,
-      `GEO-RAG PLACES • ${currentStop.gastroRag.latencyMs}ms`
-    );
-    speakText(currentStop.gastroRag.answerSpeech);
-  }, [currentStop, appendMessage, speakText]);
+    void sendChat({
+      query,
+      requestType: 'restaurant'
+    });
+  }, [currentStop, sendChat, t]);
 
   const advanceToNextStop = useCallback(() => {
     const nextIdx = currentStopIndex + 1;
     if (nextIdx < ROME_STOPS.length) {
       walkToStopIndex(nextIdx);
     } else {
+      cancelChat();
       setTourPhase('TOUR_COMPLETED');
-      const farewell =
-        'Optime! You have completed all five stops across Republican and Imperial Rome—from the Curia of Pompey to Hadrian’s Pantheon. May Fortuna guide your steps!';
-      appendMessage('AURELIUS', farewell, 'TOUR COMPLETED');
-      speakText(farewell);
+      const farewell = { key: 'farewell' };
+      appendMessage('Plinius', farewell, 'TOUR COMPLETED');
+      speakText(resolveMessage(farewell));
     }
-  }, [currentStopIndex, walkToStopIndex, appendMessage, speakText]);
+  }, [currentStopIndex, walkToStopIndex, appendMessage, speakText, cancelChat, resolveMessage]);
 
   const finishTour = useCallback(() => {
+    cancelChat();
     setTourPhase('TOUR_COMPLETED');
-    const summaryText = `We have concluded our walk at ${currentStop.name}. Whenever you are ready, you can select any monument on the map to resume exploring Ancient Rome.`;
-    appendMessage('USER', '🎙️ "Let’s finish the tour here for today."', 'VOICE INTENT');
-    appendMessage('AURELIUS', summaryText, 'SESSION ENDED');
-    speakText(summaryText);
-  }, [currentStop, appendMessage, speakText]);
+    const summaryText = { key: 'finishMessage', stopId: currentStop.id };
+    appendMessage('USER', { key: 'finishIntent' }, 'VOICE INTENT');
+    appendMessage('Plinius', summaryText, 'SESSION ENDED');
+    speakText(resolveMessage(summaryText));
+  }, [currentStop, appendMessage, speakText, cancelChat, resolveMessage]);
 
   const resetTour = useCallback(() => {
+    cancelChat();
     stopSpeech();
     setCurrentStopIndex(0);
     setGpsPosition(ROME_STOPS[0].coords);
@@ -165,26 +262,36 @@ export function TourProvider({ children }) {
     setMessages([
       {
         id: `reset_${Date.now()}`,
-        sender: 'AURELIUS',
+        sender: 'Plinius',
         tag: 'PERIPATETIC GPS GUIDE',
         timestamp: '09:30 AM',
-        text: `Tour reset to Stop #1: ${ROME_STOPS[0].name}. Tap "Simulate 'I Have Arrived'" to begin the voice overview.`
+        text: { key: 'resetMessage', stopId: ROME_STOPS[0].id }
       }
     ]);
-  }, [stopSpeech, setGpsPosition]);
+  }, [stopSpeech, setGpsPosition, cancelChat]);
 
   return (
     <TourContext.Provider
       value={{
-        stops: ROME_STOPS,
-        activePage,
-        setActivePage,
+        stops,
+        language,
+        t,
+        resolveMessage,
+        toggleLanguage,
         layoutMode,
         setLayoutMode,
         currentStopIndex,
         currentStop,
         tourPhase,
         messages,
+        sendChat,
+        isChatPending,
+        chatProgress,
+        chatSources,
+        chatError,
+        chatSessionId,
+        isVoiceRecording,
+        setIsVoiceRecording,
         ragTelemetry,
         gpsPosition,
         isWalking,

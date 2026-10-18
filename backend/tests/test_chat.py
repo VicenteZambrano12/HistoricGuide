@@ -1,3 +1,7 @@
+import asyncio
+import base64
+import json
+from threading import Event
 import unittest
 from unittest.mock import patch
 
@@ -5,6 +9,9 @@ from fastapi.testclient import TestClient
 
 from src.api.Endpoint.chat import MAX_AUDIO_BYTES
 from src.app import app
+from src.api.Endpoint.chat_stream import stream_chat
+from src.utils.general.progress import report_progress
+from src.utils.general.sources import PdfSource, report_sources
 
 
 class ChatTests(unittest.TestCase):
@@ -38,12 +45,37 @@ class ChatTests(unittest.TestCase):
                         stop="Pantheon",
                         mime_type="audio/webm" if audio_input else None,
                         language=language.lower(),
+                        request_type=None,
                     )
                     if audio_output:
                         self.assertEqual(response.headers["content-type"], "audio/wav")
                         self.assertEqual(response.content, result)
                     else:
                         self.assertEqual(response.json(), {"text": result})
+
+    def test_explicit_request_type_is_forwarded_in_every_mode(self) -> None:
+        for request_type in ("historic", "restaurant"):
+            for mode in ("text", "tts", "stt", "full"):
+                with self.subTest(request_type=request_type, mode=mode):
+                    self.pipeline.run.return_value = (
+                        b"wav-answer" if mode in ("tts", "full") else "Answer"
+                    )
+                    query = (
+                        ("query.wav", b"audio", "audio/wav")
+                        if mode in ("stt", "full") else (None, "Question")
+                    )
+                    response = self.client.post(
+                        "/chat",
+                        data={
+                            "mode": mode, "language": "EN", "stop": "Pantheon",
+                            "request_type": request_type,
+                        },
+                        files={"query": query},
+                    )
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(
+                        self.pipeline.run.call_args.kwargs["request_type"], request_type,
+                    )
 
     def test_invalid_fields_are_rejected_before_pipeline(self) -> None:
         valid = {"query": "Question", "mode": "text", "language": "EN", "stop": "Pantheon"}
@@ -54,6 +86,7 @@ class ChatTests(unittest.TestCase):
             {**valid, "query": " "},
             {**valid, "mode": "stt"},
             {**valid, "mode": "full"},
+            {**valid, "request_type": "unknown"},
         ]
         cases.extend({key: value for key, value in valid.items() if key != missing}
                      for missing in valid)
@@ -102,6 +135,114 @@ class ChatTests(unittest.TestCase):
             self.client.post("/chat", data={
                 "query": "Question", "mode": "text", "language": "EN", "stop": "Pantheon",
             })
+
+    def test_progress_stream_in_all_modes_and_languages(self) -> None:
+        for mode in ("text", "stt", "tts", "full"):
+            for language in ("EN", "ES"):
+                with self.subTest(mode=mode, language=language):
+                    audio_output = mode in ("tts", "full")
+
+                    def run(*args, **kwargs):
+                        report_progress("routing")
+                        report_progress("generating")
+                        return b"wav-answer" if audio_output else "An answer."
+
+                    self.pipeline.run.side_effect = run
+                    response = self.client.post(
+                        "/chat",
+                        data={
+                            "mode": mode, "language": language, "stop": "Pantheon",
+                            "stream": "true",
+                        },
+                        files={"query": ("voice.webm", b"voice", "audio/webm")
+                               if mode in ("stt", "full") else (None, "Question")},
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.headers["content-type"], "application/x-ndjson")
+                    self.assertEqual(response.headers["x-accel-buffering"], "no")
+                    events = [json.loads(line) for line in response.iter_lines()]
+                    self.assertEqual(events[:-1], [
+                        {"type": "progress", "step": step}
+                        for step in ("starting", "routing", "generating")
+                    ])
+                    if audio_output:
+                        self.assertEqual(events[-1]["mime_type"], "audio/wav")
+                        self.assertEqual(base64.b64decode(events[-1]["audio"]), b"wav-answer")
+                    else:
+                        self.assertEqual(events[-1], {"type": "result", "text": "An answer."})
+
+    def test_stream_failure_is_logged_and_never_returns_a_result(self) -> None:
+        self.pipeline.run.side_effect = RuntimeError("private provider detail")
+        with self.assertLogs("src.api.Endpoint.chat_stream", level="ERROR") as logs:
+            response = self.client.post("/chat", data={
+                "query": "Question", "mode": "text", "language": "EN",
+                "stop": "Pantheon", "stream": "true",
+            })
+        events = [json.loads(line) for line in response.iter_lines()]
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertNotIn("private provider detail", response.text)
+        self.assertIn("private provider detail", "\n".join(logs.output))
+        self.assertFalse(any(event["type"] == "result" for event in events))
+
+    def test_pdf_references_are_delivered_in_every_mode_with_and_without_streaming(self) -> None:
+        references = [{"source": "Pantheon/historic/guide.pdf", "page": 7}]
+        for stream in (False, True):
+            for mode in ("text", "stt", "tts", "full"):
+                with self.subTest(stream=stream, mode=mode):
+                    audio_output = mode in ("tts", "full")
+
+                    def run(*args, **kwargs):
+                        report_sources([PdfSource.model_validate(references[0])])
+                        return b"wav-answer" if audio_output else "Answer"
+
+                    self.pipeline.run.side_effect = run
+                    response = self.client.post(
+                        "/chat",
+                        data={
+                            "mode": mode, "language": "EN", "stop": "Pantheon",
+                            "stream": str(stream).lower(),
+                        },
+                        files={"query": ("voice.webm", b"voice", "audio/webm")
+                               if mode in ("stt", "full") else (None, "Question")},
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    if stream:
+                        result = json.loads(response.text.splitlines()[-1])
+                        self.assertEqual(result["sources"], references)
+                    elif audio_output:
+                        self.assertEqual(json.loads(response.headers["X-PDF-Sources"]), references)
+                    else:
+                        self.assertEqual(response.json()["sources"], references)
+
+    def test_invalid_stream_request_is_rejected_before_pipeline(self) -> None:
+        response = self.client.post("/chat", data={
+            "query": " ", "mode": "text", "language": "EN",
+            "stop": "Pantheon", "stream": "true",
+        })
+        self.assertEqual(response.status_code, 422)
+        self.pipeline_class.assert_not_called()
+
+    def test_progress_is_available_before_pipeline_finishes(self) -> None:
+        release = Event()
+
+        def run() -> str:
+            if not release.wait(timeout=5):
+                raise TimeoutError("Test did not release the pipeline")
+            return "Answer"
+
+        async def consume() -> None:
+            iterator = stream_chat(run, audio_output=False).body_iterator
+            try:
+                first = await asyncio.wait_for(anext(iterator), timeout=2)
+                self.assertEqual(json.loads(first), {"type": "progress", "step": "starting"})
+                release.set()
+                final = await asyncio.wait_for(anext(iterator), timeout=2)
+                self.assertEqual(json.loads(final), {"type": "result", "text": "Answer"})
+            finally:
+                release.set()
+                await iterator.aclose()
+
+        asyncio.run(consume())
 
 
 if __name__ == "__main__":

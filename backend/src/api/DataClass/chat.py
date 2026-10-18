@@ -1,6 +1,7 @@
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from src.utils.general.sources import PdfSource
 
 
 ChatMode = Literal["stt", "tts", "full", "text"]
@@ -13,6 +14,7 @@ class ChatResponse(BaseModel):
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "text": "The Pantheon's dome has an open oculus that lights the interior.",
+            "sources": [],
         },
     })
 
@@ -23,4 +25,9 @@ class ChatResponse(BaseModel):
             "transcription. Returned by text and stt modes."
         ),
         examples=["The Pantheon's dome has an open oculus that lights the interior."],
+    )
+    sources: list[PdfSource] = Field(
+        default_factory=list,
+        description="Retrieved PDF references with one-based page numbers.",
+        examples=[[{"source": "Pantheon/historic/guide.pdf", "page": 2}]],
     )

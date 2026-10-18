@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from src.api.Endpoint.chat import router as chat_router
+from src.api.Endpoint.documents import router as documents_router
 from src.api.Endpoint.health import router as health_router
 
 
@@ -63,3 +64,4 @@ See each operation for its applicable responses and examples.
 )
 app.include_router(health_router)
 app.include_router(chat_router)
+app.include_router(documents_router)

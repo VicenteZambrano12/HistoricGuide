@@ -34,6 +34,16 @@ The embedding model defaults to `gemini-embedding-001`; it is independent of
 `LLM_MODEL`. The builder uses the existing `GeminiClient`, batches requests with
 the `RETRIEVAL_DOCUMENT` task, and sends chunk text plus stop/type context to
 Gemini. API errors are surfaced, never replaced with fake vectors.
+Rate limits (HTTP 429) and temporary server errors receive up to three logged
+retries with exponential waits of at least 60, 120, and 240 seconds. Numeric
+`Retry-After` headers are respected; waits over 600 seconds fail explicitly.
+Unavailable models (HTTP 404) are not retried. If your configuration still uses
+the unavailable `text-embedding-004`, override it for a build without editing
+`.env`:
+
+```sh
+EMBEDDING_MODEL=gemini-embedding-001 uv run database/scripts/provisional_db_gen.py
+```
 
 `ChunkGen` uses layout-aware PDF extraction to retain table rows, strips
 repeated page-edge headers/footers and page numbers, preserves
@@ -83,10 +93,20 @@ uv run --with pypdf --with tiktoken --with python-dotenv \
 From the repository root:
 
 ```sh
-cd backend
-uv sync
-uv run uvicorn src.app:app --reload
+uv sync --project backend --locked
+uv run --project backend --locked uvicorn src.app:app --app-dir backend --reload
 ```
+
+No virtual environment activation is needed: `uv` uses `backend/.venv`.
+If the repository-root `.venv` is already active, run `deactivate` first to
+avoid the environment-mismatch warning. That warning is separate from import
+errors.
+
+Use `src.app:app` with `--app-dir backend`, not `app:app` with
+`--app-dir backend/src`: the backend imports modules through the `src` package,
+so its parent directory must be on the Python import path.
+Alternatively, from inside `backend`, run
+`uv run --locked uvicorn src.app:app --reload`.
 
 `GET http://127.0.0.1:8000/health` returns HTTP 200 with `{"status":"ok"}`.
 This is a liveness check; it does not contact external services.
@@ -118,23 +138,50 @@ uv run python -m unittest tests.test_health
 | `mode` | `stt`, `tts`, `full`, `text` |
 | `language` | `ES` or `EN` (answer language) |
 | `stop` | Nonempty tour stop, such as `Pantheon` |
+| `request_type` | Optional `historic` or `restaurant`; omitted uses automatic topic classification |
+| `stream` | Optional boolean, default `false`; `true` streams progress and the answer as NDJSON |
 
 All modes execute the agent pipeline. `stt` transcribes audio and returns an
 answer as JSON; `text` returns an answer as JSON without transcription.
 Both return `{"text":"..."}`. `tts` generates an answer from text and returns
 WAV audio; `full` accepts audio and returns WAV audio.
+With `stream=true`, all modes instead return `application/x-ndjson`. Each line
+is a JSON event: `{"type":"progress","step":"routing"}`, followed eventually
+by `{"type":"result","text":"..."}` or, for audio output,
+`{"type":"result","audio":"<base64 WAV>","mime_type":"audio/wav"}`.
+Progress steps are `starting`, `transcribing`, `routing`, `retrieving`,
+`generating`, and `synthesizing`; only stages actually executed are emitted.
+These are operational status updates, not internal model reasoning.
+Input validation still returns the usual HTTP error before streaming begins.
+A failure after streaming starts is logged server-side and emits a terminal
+`{"type":"error","detail":"..."}` event instead of a result. Proxies must not
+buffer this response. Client cancellation does not stop an in-flight provider call.
 Uploaded files must declare an `audio/*` MIME type and contain at most
 14,000,000 bytes. Invalid requests return HTTP 422; oversized audio returns 413.
 Chat requires the `GEMINI_API_KEY` configuration described below.
+Set `LLM_MODEL` to a model ID such as `gemini-3.5-flash-lite`, with no
+embedded whitespace or pasted log output. A malformed value can cause Gemini
+HTTP 400 (`GenerateContentRequest.model: unexpected model name format`).
+For the existing RAG snapshot, set `EMBEDDING_MODEL=gemini-embedding-001`
+in the root `.env` and restart the backend after changing configuration.
+The model must match `build_info.embedding_model` in the database; a mismatch
+fails before the query embedding request. An environment variable overrides
+the `.env` value, so update or unset any conflicting `EMBEDDING_MODEL` export.
+The frontend uses `language=EN`. Suggested questions send `request_type`;
+freeform text and voice messages let the backend classify the topic.
+Use the corpus stop keys for retrieval: `Torre_Argentina`, `Forum_Boarium`,
+`Roman_Forum`, `Trajans_Markets`, or `Pantheon`.
 
 ```sh
 curl http://127.0.0.1:8000/chat \
   -F 'query=Tell me about the Pantheon' \
-  -F 'mode=text' -F 'language=EN' -F 'stop=Pantheon'
+  -F 'mode=text' -F 'language=EN' -F 'stop=Pantheon' \
+  -F 'request_type=historic'
 
 curl http://127.0.0.1:8000/chat \
   -F 'query=@recording.webm;type=audio/webm' \
   -F 'mode=full' -F 'language=ES' -F 'stop=Pantheon' \
+  -F 'request_type=restaurant' \
   --output answer.wav
 ```
 
@@ -171,8 +218,10 @@ text = stt.transcribe("recording.mp3")
 text = stt.transcribe(audio_bytes, mime_type="audio/webm")
 ```
 
-`STT` defaults to the low-cost `gemini-2.5-flash-lite` model, independently of
+`STT` defaults to the low-cost `gemini-3.5-flash-lite` model, independently of
 `LLM_MODEL`. It returns only transcription text in the original language.
+The older `gemini-2.5-flash-lite` can return HTTP 404 for new users even when
+it appears in the model listing. Restart the backend after updating the code.
 To override the key, model, or output limit, pass an existing `GeminiClient`
 as `STT(client=GeminiClient(...))`.
 Inline requests must be smaller than 20 MB including base64 encoding and prompts
@@ -272,7 +321,7 @@ answer = generator.generate(**route.model_dump(), user_query=query)
 # Explicit categories also work, with or without a query:
 answer = generator.generate("Pantheon", "restaurant")
 
-# A future retriever can supply text chunks filtered by stop and category:
+# Optional caller-supplied context is supplemented with two database matches:
 answer = generator.generate(
     "Pantheon",
     "historic",
@@ -284,11 +333,28 @@ answer = generator.generate(
 The generator selects `backend/src/config/prompts/historic.yaml` or
 `backend/src/config/prompts/restaurant.yaml` using the validated category
 (`historic` or `restaurant`). It returns only the answer string, suitable for
-passing to `TTS`. With no context it uses Gemini's general knowledge; with context,
-the prompt instructs it to ground factual claims in the supplied chunks.
-Prompt instructions do not guarantee factual accuracy. No database retrieval
-or metadata filtering is implemented yet: the caller must supply relevant chunks
-for the requested stop and category.
+passing to `TTS`. Before generating, it retrieves the two most similar chunks
+from `database/provisional_db/chunks.sqlite3`, filtering by the exact stop folder
+name and type (`historic`, or `restaurants` for category `restaurant`). Queries
+use `RETRIEVAL_QUERY` embeddings and cosine similarity, not a text search.
+When no query is provided, a category-specific introduction is embedded instead.
+If only one chunk matches, that chunk is used; no matches raise an error.
+Retrieved chunks are appended to optional caller-supplied context without
+modifying the caller's list. Both prompts instruct Gemini to ground factual
+claims in this context; prompt instructions do not guarantee factual accuracy.
+
+Build the provisional database before using response generation or `/chat`.
+The backend's `EMBEDDING_MODEL` must match the database model and dimensions.
+Missing databases, missing stop/type matches, corrupt or incompatible vectors,
+and embedding API failures propagate instead of silently generating an
+ungrounded answer. The default database path is repository-relative regardless
+of the working directory. Override it with
+`ResponseGenerator(database_path=Path("/path/to/chunks.sqlite3"))`
+after importing `Path` from `pathlib`. Each retrieval opens and closes a
+read-only connection so subsequent requests can read a rebuilt snapshot.
+The SQLite retrieval helper is separate from response generation; a future
+Qdrant implementation can preserve the stop/type filters and top-two behavior
+without changing the public generation API.
 
 The public class stays under `backend/src/systems/AgentSystem/ResponseGenerator/`.
 Helpers live in `backend/src/utils/AgentSystem/ResponseGenerator/`, one function
@@ -337,7 +403,7 @@ pipeline = AgentPipeline()
 answer = pipeline.run("Pantheon", user_query="What is special about this dome?")
 answer = pipeline.run("Pantheon", param="restaurant")
 
-# Optional chunks from a future retriever are passed through to generation:
+# Optional extra context is passed through alongside database retrieval:
 answer = pipeline.run(
     "Pantheon",
     user_query="Describe the dome.",
@@ -345,10 +411,13 @@ answer = pipeline.run(
 )
 ```
 
-Supply exactly one of `user_query` or `param`, plus the stop. Text queries make
-two Gemini calls: classification, then answer generation using the original query
-and routed category. Explicit `historic` or `restaurant` parameters skip the
-classification call and generate an introduction using the selected prompt.
+Supply `user_query`, `param`, or both, plus the stop. Text queries without a topic make
+three Gemini calls: classification, query embedding for filtered top-two
+retrieval, then answer generation using the original query and routed category.
+Explicit `historic` or `restaurant` parameters skip the classification call
+and generate using the selected prompt. If a question is also supplied, it is
+preserved for retrieval and generation; otherwise retrieval uses an introduction
+query. The standalone orchestrator still requires exactly one routing input.
 The entire input, including optional context chunks, is validated before any
 API call. Errors propagate without returning a route or fabricated answer.
 
@@ -358,9 +427,9 @@ or testing. Default components are independent per pipeline, and their Gemini
 clients are created lazily and reused. The thin class lives under
 `backend/src/systems/AgentSystem/AgentPipeline/`; its helper and Pydantic request
 model live under `backend/src/utils/AgentSystem/AgentPipeline/`.
-This is synchronous text-to-text processing only: no STT, TTS, database retrieval,
-metadata filtering, or HTTP endpoint is added. The offline tests also cover the
-complete routing-to-generation flow.
+This is synchronous text-to-text processing with database retrieval and metadata
+filtering; speech stages and HTTP serving are separate wrappers. The offline
+tests also cover retrieval ranking/filtering and the routing-to-generation flow.
 
 ## Audio and text pipeline
 
@@ -395,7 +464,9 @@ audio MIME type. `TTS` and `only text` accept nonempty text, not audio bytes or
 `Path` objects. A string in an audio-input mode is a file path, never query text.
 The stop is required in every mode. Optional `context` chunks are passed through
 to the agents, and `voice` selects the output voice when TTS is enabled.
-The agents classify the input text or transcript and generate the answer;
+Optional `request_type="historic"` or `request_type="restaurant"` selects a topic
+without classification and preserves the input question or transcript.
+Otherwise the agents classify the input text or transcript and generate the answer;
 TTS speaks that answer, not the original query.
 
 `Pipeline` accepts `agent_pipeline`, `stt`, and `tts` components for injection.

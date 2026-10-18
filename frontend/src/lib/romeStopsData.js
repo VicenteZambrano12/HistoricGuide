@@ -1,6 +1,7 @@
 export const ROME_STOPS = [
   {
     id: 'torre-argentina',
+    apiStop: 'Torre_Argentina',
     order: 1,
     name: 'Largo di Torre Argentina',
     subtitle: 'Curia of Pompey & Sacred Area',
@@ -60,6 +61,7 @@ export const ROME_STOPS = [
   },
   {
     id: 'forum-boarium',
+    apiStop: 'Forum_Boarium',
     order: 2,
     name: 'Forum Boarium',
     subtitle: 'Temples of Portunus & Hercules Victor',
@@ -119,6 +121,7 @@ export const ROME_STOPS = [
   },
   {
     id: 'roman-forum',
+    apiStop: 'Roman_Forum',
     order: 3,
     name: 'The Roman Forum',
     subtitle: 'Curia Julia, Rostra & Via Sacra',
@@ -178,6 +181,7 @@ export const ROME_STOPS = [
   },
   {
     id: 'trajans-markets',
+    apiStop: 'Trajans_Markets',
     order: 4,
     name: "Trajan's Forum & Markets",
     subtitle: 'Mercati di Traiano & Ulpian Basilica',
@@ -237,6 +241,7 @@ export const ROME_STOPS = [
   },
   {
     id: 'pantheon',
+    apiStop: 'Pantheon',
     order: 5,
     name: 'The Pantheon',
     subtitle: 'Rotunda of Agrippa & Hadrian',

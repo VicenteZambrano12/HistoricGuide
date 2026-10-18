@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 from src.systems.STT.STT import STT
 from src.systems.TTS.TTS import TTS
 from src.utils.AgentSystem.ResponseGenerator.dataclasses.types import Language
+from src.utils.AgentSystem.Orchestrator.dataclasses.types import Category
+from src.utils.general.progress import report_progress
 
 from .dataclasses.PipelineRequest import PipelineRequest
 from .dataclasses.types import PipelineMode
@@ -22,6 +24,7 @@ def run(
     voice: str = "Kore",
     context: list[str] | None = None,
     language: Language = "en",
+    request_type: Category | None = None,
 ) -> str | bytes:
     request = PipelineRequest(
         data=data,
@@ -31,18 +34,22 @@ def run(
         voice=voice,
         context=[] if context is None else context,
         language=language,
+        request_type=request_type,
     )
     query = request.data
     if request.mode in ("STT", "full"):
+        report_progress("transcribing")
         if pipeline.stt is None:
             pipeline.stt = STT()
         query = pipeline.stt.transcribe(request.data, mime_type=request.mime_type)
     if not isinstance(query, str):
         raise TypeError("The agent pipeline requires a text query.")
     answer = pipeline.agent_pipeline.run(
-        request.stop, user_query=query, context=request.context, language=request.language
+        request.stop, user_query=query, param=request.request_type,
+        context=request.context, language=request.language
     )
     if request.mode in ("TTS", "full"):
+        report_progress("synthesizing")
         if pipeline.tts is None:
             pipeline.tts = TTS()
         return pipeline.tts.synthesize(answer, voice=request.voice)

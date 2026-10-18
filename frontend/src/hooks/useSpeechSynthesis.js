@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 
-export function useSpeechSynthesis() {
+export function useSpeechSynthesis(language = 'en') {
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
@@ -27,7 +27,7 @@ export function useSpeechSynthesis() {
       }
 
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-GB';
+      utterance.lang = language === 'es' ? 'es-ES' : 'en-GB';
       utterance.rate = 1.02;
       utterance.pitch = 0.95;
 
@@ -37,7 +37,7 @@ export function useSpeechSynthesis() {
 
       window.speechSynthesis.speak(utterance);
     },
-    [audioEnabled]
+    [audioEnabled, language]
   );
 
   const toggleAudio = useCallback(() => {

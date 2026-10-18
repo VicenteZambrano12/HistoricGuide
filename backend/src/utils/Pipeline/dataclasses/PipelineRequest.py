@@ -2,7 +2,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.utils.AgentSystem.Orchestrator.dataclasses.types import NonEmptyText
+from src.utils.AgentSystem.Orchestrator.dataclasses.types import Category, NonEmptyText
 from src.utils.AgentSystem.ResponseGenerator.dataclasses.types import Language
 
 from .types import PipelineMode
@@ -15,6 +15,7 @@ class PipelineRequest(BaseModel):
     mode: PipelineMode
     stop: NonEmptyText
     language: Language = "en"
+    request_type: Category | None = None
     mime_type: NonEmptyText | None = None
     voice: NonEmptyText = "Kore"
     context: list[NonEmptyText] = Field(default_factory=list)

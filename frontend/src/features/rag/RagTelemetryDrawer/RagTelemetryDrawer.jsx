@@ -1,35 +1,52 @@
-import React from 'react';
 import { useTour } from '../../../store/TourContext';
-import { formatConfidence } from '../../../utils/formatters';
+import { pdfSourceHref } from '../../../lib/pdfSources';
 import './RagTelemetryDrawer.css';
 
 export function RagTelemetryDrawer() {
-  const { ragTelemetry } = useTour();
-
-  if (!ragTelemetry) return null;
-
+  const { t, chatSources, isChatPending } = useTour();
   return (
-    <section className="rag-drawer">
-      <div className="rag-drawer__header">
-        <span className="rag-drawer__badge">{ragTelemetry.badge}</span>
-        <span className="rag-drawer__metrics">
-          COLLECTION: {ragTelemetry.collection} • LATENCY: {ragTelemetry.latencyMs}ms
-        </span>
+    <section className="rag-drawer" aria-label={t('sources')}>
+      <div className="rag-drawer__tabs" role="tablist" aria-label={t('sources')}>
+        <button
+          className="rag-drawer__tab"
+          type="button"
+          role="tab"
+          id="sources-tab"
+          aria-selected="true"
+          aria-controls="sources-panel"
+        >
+          {t('sources')}
+        </button>
       </div>
-
-      <div className="rag-drawer__query">{ragTelemetry.query}</div>
-
-      <div className="rag-drawer__chunks">
-        {ragTelemetry.items.map((item) => (
-          <article key={item.id} className="rag-drawer__chunk">
-            <div className="rag-drawer__chunk-top">
-              <span className="rag-drawer__chunk-title">{item.title}</span>
-              <span className="rag-drawer__score">{formatConfidence(item.score)}</span>
-            </div>
-            <span className="rag-drawer__chunk-sub">{item.subtitle}</span>
-            <p className="rag-drawer__chunk-snippet">{item.snippet}</p>
-          </article>
-        ))}
+      <div
+        className="rag-drawer__panel"
+        role="tabpanel"
+        id="sources-panel"
+        aria-labelledby="sources-tab"
+        tabIndex={0}
+      >
+        {chatSources.length ? (
+          <ul className="rag-drawer__sources">
+            {chatSources.map((source) => (
+              <li key={`${source.source}:${source.page}`}>
+                <a
+                  className="rag-drawer__source"
+                  href={pdfSourceHref(source)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={t('openSourcePdf', { page: source.page })}
+                >
+                  <span className="rag-drawer__filename">{source.source.split('/').at(-1)}</span>
+                  <span className="rag-drawer__page">{t('sourcePage', { page: source.page })} &nearr;</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="rag-drawer__empty">
+            {t(isChatPending ? 'sourcesLoading' : 'sourcesEmpty')}
+          </p>
+        )}
       </div>
     </section>
   );

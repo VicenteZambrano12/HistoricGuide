@@ -14,6 +14,12 @@ from src.utils.general.GeminiApiCall import GeminiClient
 
 class AgentPipelineTests(unittest.TestCase):
     def setUp(self) -> None:
+        retrieval_patch = patch(
+            "src.utils.AgentSystem.ResponseGenerator.generate_response.retrieve_chunks",
+            return_value=[],
+        )
+        retrieval_patch.start()
+        self.addCleanup(retrieval_patch.stop)
         self.pipeline = AgentPipeline(
             orchestrator=Orchestrator(client=GeminiClient(api_key="routing-key")),
             response_generator=ResponseGenerator(
@@ -82,6 +88,22 @@ class AgentPipelineTests(unittest.TestCase):
                 self.assertIsNone(data["user_query"])
 
     @patch("src.utils.general.GeminiApiCall.urlopen")
+    def test_explicit_category_preserves_question_without_classification(self, urlopen) -> None:
+        for category in ("historic", "restaurant"):
+            with self.subTest(category=category):
+                urlopen.reset_mock()
+                urlopen.return_value = self.api_response("A focused answer.")
+                answer = self.pipeline.run(
+                    "Pantheon", param=category, user_query="Tell me more."
+                )
+                self.assertEqual(answer, "A focused answer.")
+                urlopen.assert_called_once()
+                payload = json.loads(urlopen.call_args.args[0].data)
+                data = json.loads(payload["contents"][0]["parts"][0]["text"])
+                self.assertEqual(data["category"], category)
+                self.assertEqual(data["user_query"], "Tell me more.")
+
+    @patch("src.utils.general.GeminiApiCall.urlopen")
     def test_spanish_reaches_generation_for_queries_and_explicit_categories(self, urlopen) -> None:
         for kwargs in ({"user_query": "Tell me more"}, {"param": "historic"}):
             with self.subTest(kwargs=kwargs):
@@ -117,7 +139,6 @@ class AgentPipelineTests(unittest.TestCase):
     def test_invalid_requests_fail_before_any_api_call(self, urlopen) -> None:
         cases = [
             {"stop": "Pantheon"},
-            {"stop": "Pantheon", "user_query": "history", "param": "historic"},
             {"stop": "Pantheon", "user_query": " "},
             {"stop": "", "param": "historic"},
             {"stop": 1, "param": "historic"},

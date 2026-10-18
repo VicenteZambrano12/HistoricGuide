@@ -15,6 +15,7 @@ import json
 import logging
 import math
 from pathlib import Path
+import re
 import sqlite3
 import sys
 from tempfile import NamedTemporaryFile

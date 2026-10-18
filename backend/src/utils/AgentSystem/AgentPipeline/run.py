@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING
 
 from src.utils.AgentSystem.Orchestrator.dataclasses.types import Category
 from src.utils.AgentSystem.ResponseGenerator.dataclasses.types import Language
+from src.utils.general.progress import report_progress
 
 from .dataclasses.PipelineRequest import PipelineRequest
 
@@ -25,8 +26,11 @@ def run(
         context=[] if context is None else context,
         language=language,
     )
+    report_progress("routing")
     route = pipeline.orchestrator.route(
-        request.stop, user_query=request.user_query, param=request.param
+        request.stop,
+        user_query=request.user_query if request.param is None else None,
+        param=request.param,
     )
     return pipeline.response_generator.generate(
         route.stop,

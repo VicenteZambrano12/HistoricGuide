@@ -3,7 +3,7 @@ import { useTour } from '../../../store/TourContext';
 import './StopTimelineBar.css';
 
 export function StopTimelineBar() {
-  const { stops, currentStopIndex, walkToStopIndex } = useTour();
+  const { stops, currentStopIndex, walkToStopIndex, t } = useTour();
 
   return (
     <div className="stop-timeline">
@@ -17,7 +17,7 @@ export function StopTimelineBar() {
             onClick={() => walkToStopIndex(idx)}
           >
             <div className="stop-timeline__top">
-              <span>STOP 0{stop.order}</span>
+              <span>{t('stop')} 0{stop.order}</span>
               <span>{stop.periodTag}</span>
             </div>
             <div className="stop-timeline__name">{stop.name}</div>

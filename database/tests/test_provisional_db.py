@@ -1,3 +1,4 @@
+from contextlib import closing
 from io import BytesIO
 import json
 from pathlib import Path
@@ -7,13 +8,14 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from database.scripts.chunk_gen import ChunkGen
-from database.scripts.provisional_db_gen import build_database
+from database.scripts.provisional_db_gen import _embed_batch, build_database
 from src.utils.general.GeminiApiCall import GeminiClient
 
 
@@ -140,6 +142,31 @@ class EmbeddingTests(unittest.TestCase):
 
 
 class DatabaseTests(unittest.TestCase):
+    @patch("database.scripts.provisional_db_gen.time.sleep")
+    def test_embedding_retry_respects_retry_after(self, sleep: Mock) -> None:
+        client = GeminiClient(api_key="test-key")
+        error = HTTPError("https://example.invalid", 429, "Rate limited", {"Retry-After": "90"}, None)
+        with patch.object(client, "embed", side_effect=[error, [[1.0, 2.0]]]) as embed:
+            with self.assertLogs("database.scripts.provisional_db_gen", level="WARNING"):
+                self.assertEqual(_embed_batch(client, ["text"], ["title"]), [[1.0, 2.0]])
+        sleep.assert_called_once_with(90)
+        self.assertEqual(embed.call_count, 2)
+
+    @patch("database.scripts.provisional_db_gen.time.sleep")
+    def test_embedding_retries_are_bounded_and_404_is_not_retried(self, sleep: Mock) -> None:
+        client = GeminiClient(api_key="test-key")
+        for code, calls in ((429, 4), (503, 4), (404, 1)):
+            with self.subTest(code=code):
+                sleep.reset_mock()
+                error = HTTPError("https://example.invalid", code, "API error", {}, None)
+                with patch.object(client, "embed", side_effect=error) as embed:
+                    with patch("database.scripts.provisional_db_gen.LOGGER.warning"):
+                        with self.assertRaises(HTTPError):
+                            _embed_batch(client, ["text"], ["title"])
+                self.assertEqual(embed.call_count, calls)
+                self.assertEqual(sleep.call_count, calls - 1)
+                error.close()
+
     def test_real_pdf_snapshot_atomic_failure_and_rebuild(self) -> None:
         client = GeminiClient(api_key="test-key", embedding_model="test-embedding")
         with TemporaryDirectory() as directory:
@@ -151,7 +178,7 @@ class DatabaseTests(unittest.TestCase):
                 self.assertTrue(all(len(call.args[0]) <= 100 for call in embed.call_args_list))
                 self.assertIn("Stop:", embed.call_args_list[0].args[0][0])
                 first_snapshot = output.read_bytes()
-                with sqlite3.connect(output) as connection:
+                with closing(sqlite3.connect(output)) as connection:
                     self.assertEqual(connection.execute("SELECT count(*) FROM chunks").fetchone(), (count,))
                     self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone(), ("ok",))
                     self.assertEqual(connection.execute("SELECT count(DISTINCT stop) FROM chunks").fetchone(), (5,))
@@ -160,7 +187,7 @@ class DatabaseTests(unittest.TestCase):
                     self.assertEqual(json.loads(connection.execute("SELECT embedding FROM chunks LIMIT 1").fetchone()[0]), [1.0, 2.0])
                     ids = connection.execute("SELECT id FROM chunks ORDER BY id").fetchall()
                 build_database(docs, output, client=client, batch_size=100)
-                with sqlite3.connect(output) as connection:
+                with closing(sqlite3.connect(output)) as connection:
                     self.assertEqual(connection.execute("SELECT id FROM chunks ORDER BY id").fetchall(), ids)
             with patch.object(client, "embed", side_effect=RuntimeError("API unavailable")):
                 before_failure = output.read_bytes()

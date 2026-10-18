@@ -26,10 +26,15 @@ body,
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2f2a24;
+  background: var(--scrollbar-thumb);
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--gold-primary);
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold-primary);
+  outline-offset: 3px;
 }

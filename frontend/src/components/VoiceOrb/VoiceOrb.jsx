@@ -1,15 +1,16 @@
-import React from 'react';
 import { useTour } from '../../store/TourContext';
 import './VoiceOrb.css';
 
 export function VoiceOrb() {
-  const { isSpeaking, isWalking, tourPhase } = useTour();
+  const { isSpeaking, isWalking, tourPhase, isChatPending, isVoiceRecording } = useTour();
 
   const getStatusLabel = () => {
     if (isWalking) return 'GPS WALKING SIMULATION ACTIVE...';
+    if (isVoiceRecording) return 'MICROPHONE ACTIVE...';
+    if (isChatPending) return 'WAITING FOR BACKEND GUIDE...';
     if (isSpeaking) return 'SYNTHESIZING VOICE NARRATION...';
     if (tourPhase === 'READY_TO_ARRIVE') return 'AWAITING ARRIVAL CONFIRMATION';
-    return 'LISTENING FOR TOURIST VOICE INTENT';
+    return 'READY FOR A QUESTION OR VOICE MESSAGE';
   };
 
   return (
@@ -19,7 +20,7 @@ export function VoiceOrb() {
           🎙️
         </div>
         <div className="voice-orb__meta">
-          <span className="voice-orb__speaker">AURELIUS // VOICE AI HISTORIAN</span>
+          <span className="voice-orb__speaker">Plinius // VOICE AI HISTORIAN</span>
           <span className="voice-orb__status">{getStatusLabel()}</span>
         </div>
       </div>

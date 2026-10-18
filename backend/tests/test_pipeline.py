@@ -15,6 +15,7 @@ from src.systems.Pipeline import Pipeline
 from src.systems.STT.STT import STT
 from src.systems.TTS.TTS import TTS
 from src.utils.general.GeminiApiCall import GeminiClient
+from src.utils.general.progress import progress_reporting, report_progress
 
 
 class PipelineTests(unittest.TestCase):
@@ -28,6 +29,49 @@ class PipelineTests(unittest.TestCase):
         self.pipeline = Pipeline(
             agent_pipeline=self.agents, stt=self.stt, tts=self.tts
         )
+
+    def test_real_pipeline_reports_only_executed_steps_in_order(self) -> None:
+        client = create_autospec(GeminiClient, instance=True)
+        client.generate.return_value = "An answer."
+        generator = ResponseGenerator(client=client)
+        pipeline = Pipeline(
+            agent_pipeline=AgentPipeline(
+                orchestrator=Orchestrator(), response_generator=generator,
+            ),
+            stt=self.stt, tts=self.tts,
+        )
+        with patch(
+            "src.utils.AgentSystem.ResponseGenerator.generate_response.retrieve_chunks",
+            return_value=["Retrieved fact."],
+        ):
+            for mode in ("STT", "TTS", "full", "only text"):
+                with self.subTest(mode=mode):
+                    steps = []
+                    audio_input = mode in ("STT", "full")
+                    with progress_reporting(steps.append):
+                        pipeline.run(
+                            b"audio" if audio_input else "Question", mode,
+                            stop="Pantheon", request_type="historic",
+                            mime_type="audio/wav" if audio_input else None,
+                        )
+                    expected = ["transcribing"] if audio_input else []
+                    expected += ["routing", "retrieving", "generating"]
+                    if mode in ("TTS", "full"):
+                        expected.append("synthesizing")
+                    self.assertEqual(steps, expected)
+                    report_progress("starting")
+                    self.assertEqual(steps, expected, "Reporter must be reset after each request")
+
+    def test_progress_stops_at_failed_stage_and_resets_reporter(self) -> None:
+        steps = []
+        self.stt.transcribe.side_effect = RuntimeError("Transcription failed")
+        with self.assertRaisesRegex(RuntimeError, "Transcription failed"):
+            with progress_reporting(steps.append):
+                self.pipeline.run(b"audio", "full", stop="Pantheon", mime_type="audio/wav")
+        report_progress("routing")
+        self.assertEqual(steps, ["transcribing"])
+        self.agents.run.assert_not_called()
+        self.tts.synthesize.assert_not_called()
 
     def test_all_modes_always_include_agents_in_order(self) -> None:
         for mode in ("STT", "TTS", "full", "only text"):
@@ -56,6 +100,7 @@ class PipelineTests(unittest.TestCase):
                 expected.append(call.agents.run(
                     "Pantheon",
                     user_query="Tell me about the Pantheon.",
+                    param=None,
                     context=["Retrieved fact."],
                     language="en",
                 ))
@@ -72,6 +117,47 @@ class PipelineTests(unittest.TestCase):
         self.stt.transcribe.assert_called_once_with(path, mime_type=None)
         self.agents.run.assert_called_once()
 
+    def test_request_type_reaches_agents_in_every_mode(self) -> None:
+        for request_type in ("historic", "restaurant"):
+            for mode in ("STT", "TTS", "full", "only text"):
+                with self.subTest(request_type=request_type, mode=mode):
+                    audio_input = mode in ("STT", "full")
+                    self.pipeline.run(
+                        b"audio" if audio_input else "Question",
+                        mode,
+                        stop="Pantheon",
+                        mime_type="audio/wav" if audio_input else None,
+                        request_type=request_type,
+                    )
+                    self.assertEqual(
+                        self.agents.run.call_args.kwargs["param"], request_type,
+                    )
+
+    def test_explicit_topic_with_real_agents_keeps_query_in_every_mode(self) -> None:
+        generator = create_autospec(ResponseGenerator, instance=True)
+        generator.generate.return_value = "A focused answer."
+        agents = AgentPipeline(
+            orchestrator=Orchestrator(), response_generator=generator,
+        )
+        pipeline = Pipeline(agent_pipeline=agents, stt=self.stt, tts=self.tts)
+        for category in ("historic", "restaurant"):
+            for mode in ("STT", "TTS", "full", "only text"):
+                with self.subTest(category=category, mode=mode):
+                    audio_input = mode in ("STT", "full")
+                    pipeline.run(
+                        b"recording" if audio_input else "Tell me about the Pantheon.",
+                        mode,
+                        stop="Pantheon",
+                        mime_type="audio/wav" if audio_input else None,
+                        request_type=category,
+                    )
+                    generator.generate.assert_called_with(
+                        "Pantheon", category,
+                        user_query="Tell me about the Pantheon.",
+                        context=[], language="en",
+                    )
+                    self.assertIsNone(agents.orchestrator.client)
+
     def test_invalid_requests_do_not_invoke_any_stage(self) -> None:
         cases = [
             {"data": "question", "mode": "unknown", "stop": "Pantheon"},
@@ -86,6 +172,7 @@ class PipelineTests(unittest.TestCase):
             {"data": "question", "mode": "only text", "stop": "Pantheon", "context": [""]},
             {"data": "question", "mode": "only text", "stop": "Pantheon", "mime_type": "audio/wav"},
             {"data": "question", "mode": "only text", "stop": "Pantheon", "language": "fr"},
+            {"data": "question", "mode": "only text", "stop": "Pantheon", "request_type": "unknown"},
             {"data": b"audio", "mode": "full", "stop": "Pantheon", "mime_type": "audio/wav", "language": None},
         ]
         for kwargs in cases:
@@ -158,8 +245,12 @@ class PipelineTests(unittest.TestCase):
         self.assertIsNone(first.stt)
         self.assertIsNone(first.tts)
 
+    @patch(
+        "src.utils.AgentSystem.ResponseGenerator.generate_response.retrieve_chunks",
+        return_value=[],
+    )
     @patch("src.utils.general.GeminiApiCall.urlopen")
-    def test_all_modes_with_real_components_and_mocked_gemini(self, urlopen) -> None:
+    def test_all_modes_with_real_components_and_mocked_gemini(self, urlopen, retrieval) -> None:
         pcm = b"\x00\x00\x01\x00"
         for mode in ("STT", "TTS", "full", "only text"):
             with self.subTest(mode=mode):

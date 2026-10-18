@@ -5,7 +5,7 @@
   overflow: hidden;
   position: relative;
   border: 1px solid var(--gold-border);
-  background: linear-gradient(180deg, #1b1610 0%, #0e0c0a 100%);
+  background: var(--art-background);
 }
 
 .monument-art__svg {
@@ -17,7 +17,7 @@
 .monument-art__overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(11, 10, 9, 0.1) 0%, rgba(11, 10, 9, 0.85) 100%);
+  background: var(--art-overlay);
   display: flex;
   flex-direction: column;
   justify-content: flex-end;

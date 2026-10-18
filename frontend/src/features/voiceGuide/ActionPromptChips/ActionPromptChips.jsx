@@ -1,73 +1,42 @@
-import React from 'react';
 import { useTour } from '../../../store/TourContext';
+import { ChatIcon } from '../../../components/ChatIcon/ChatIcon';
 import './ActionPromptChips.css';
 
-export function ActionPromptChips() {
-  const {
-    tourPhase,
-    isWalking,
-    currentStopIndex,
-    stops,
-    confirmArrivalAtStop,
-    askHistoricalRag,
-    askGastroRag,
-    advanceToNextStop,
-    finishTour
-  } = useTour();
-
-  const hasNextStop = currentStopIndex < stops.length - 1;
+export function ActionPromptChips({ disabled = false }) {
+  const { isWalking, isChatPending, askHistoricalRag, askGastroRag, t } = useTour();
+  const unavailable = disabled || isWalking || isChatPending;
 
   return (
     <div className="action-chips">
-      <span className="action-chips__label">
-        🎙️ SIMULATE VOICE TOURIST RESPONSES (POST-ARRIVAL OPTIONS)
-      </span>
-
+      <span className="action-chips__label">{t('suggestedQuestions')}</span>
       <div className="action-chips__grid">
-        {tourPhase === 'READY_TO_ARRIVE' || tourPhase === 'WALKING_TO_STOP' ? (
-          <button
-            type="button"
-            className="action-chips__btn action-chips__btn--primary"
-            disabled={isWalking}
-            onClick={confirmArrivalAtStop}
-          >
-            📍 &ldquo;I&apos;ve arrived at the monument&rdquo; (Trigger Overview)
-          </button>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="action-chips__btn action-chips__btn--rag"
-              onClick={askHistoricalRag}
-            >
-              🏛️ 1. Historical &amp; Cultural Details (RAG)
-            </button>
-
-            <button
-              type="button"
-              className="action-chips__btn action-chips__btn--gastro"
-              onClick={askGastroRag}
-            >
-              ☕ 2. Go to Coffee / Trattoria (Geo-RAG)
-            </button>
-
-            <button
-              type="button"
-              className="action-chips__btn"
-              onClick={advanceToNextStop}
-            >
-              🚶 3. {hasNextStop ? 'Walk to Next Stop' : 'Complete Final Stop'}
-            </button>
-
-            <button
-              type="button"
-              className="action-chips__btn"
-              onClick={finishTour}
-            >
-              🏁 4. Finish Tour Here
-            </button>
-          </>
-        )}
+        <button
+          type="button"
+          className="action-chips__btn action-chips__btn--gastro"
+          disabled={unavailable}
+          onClick={() => askGastroRag(t('foodQuery'))}
+        >
+          <span className="action-chips__icon"><ChatIcon name="food" /></span>
+          <span>{t('findFood')}</span>
+        </button>
+        <button
+          type="button"
+          className="action-chips__btn action-chips__btn--gastro"
+          disabled={unavailable}
+          onClick={() => askGastroRag(t('coffeeQuery'))}
+        >
+          <span className="action-chips__icon"><ChatIcon name="coffee" /></span>
+          <span>{t('findCoffee')}</span>
+        </button>
+        <button
+          type="button"
+          className="action-chips__btn action-chips__btn--rag"
+          disabled={unavailable}
+          onClick={askHistoricalRag}
+        >
+          <span className="action-chips__icon"><ChatIcon name="history" /></span>
+          <span>{t('exploreHistory')}</span>
+        </button>
       </div>
     </div>
   );

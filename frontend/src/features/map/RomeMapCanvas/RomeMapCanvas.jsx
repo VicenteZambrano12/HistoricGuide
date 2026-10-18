@@ -1,4 +1,3 @@
-import React from 'react';
 import { useTour } from '../../../store/TourContext';
 import { formatCoordinates } from '../../../utils/formatters';
 import './RomeMapCanvas.css';
@@ -11,9 +10,12 @@ export function RomeMapCanvas() {
     tourPhase,
     gpsPosition,
     isWalking,
+    isChatPending,
+    isVoiceRecording,
     walkProgress,
     walkToStopIndex,
-    confirmArrivalAtStop
+    confirmArrivalAtStop,
+    t
   } = useTour();
 
   const routePoints = stops.map((s) => `${s.coords.mapX},${s.coords.mapY}`).join(' ');
@@ -22,7 +24,7 @@ export function RomeMapCanvas() {
     <section className="rome-map">
       <div className="rome-map__header">
         <span className="rome-map__title">
-          🗺️ FORMA URBIS ROMAE // INTERACTIVE PERIPATETIC RADAR
+          {t('mapTitle')}
         </span>
         <span className="rome-map__gps-pill">
           GPS: {formatCoordinates(gpsPosition?.lat, gpsPosition?.lng)}
@@ -36,7 +38,7 @@ export function RomeMapCanvas() {
               <path
                 d="M 40 0 L 0 0 0 40"
                 fill="none"
-                stroke="rgba(212, 175, 55, 0.06)"
+                stroke="var(--map-grid)"
                 strokeWidth="1"
               />
             </pattern>
@@ -50,11 +52,11 @@ export function RomeMapCanvas() {
             cy="430"
             rx="95"
             ry="60"
-            fill="rgba(212, 175, 55, 0.03)"
-            stroke="rgba(212, 175, 55, 0.12)"
+            fill="var(--map-terrain)"
+            stroke="var(--map-contour)"
             strokeDasharray="4 4"
           />
-          <text x="485" y="435" fill="rgba(212,175,55,0.28)" fontSize="11" fontFamily="Cinzel">
+          <text x="485" y="435" fill="var(--map-terrain-label)" fontSize="11" fontFamily="Cinzel">
             MONS PALATINUS
           </text>
 
@@ -63,15 +65,15 @@ export function RomeMapCanvas() {
             cy="220"
             rx="90"
             ry="52"
-            fill="rgba(212, 175, 55, 0.03)"
-            stroke="rgba(212, 175, 55, 0.12)"
+            fill="var(--map-terrain)"
+            stroke="var(--map-contour)"
             strokeDasharray="4 4"
           />
-          <text x="535" y="220" fill="rgba(212,175,55,0.28)" fontSize="11" fontFamily="Cinzel">
+          <text x="535" y="220" fill="var(--map-terrain-label)" fontSize="11" fontFamily="Cinzel">
             COLLIS QUIRINALIS
           </text>
 
-          <text x="190" y="145" fill="rgba(212,175,55,0.28)" fontSize="12" fontFamily="Cinzel">
+          <text x="190" y="145" fill="var(--map-terrain-label)" fontSize="12" fontFamily="Cinzel">
             CAMPUS MARTIUS
           </text>
 
@@ -79,18 +81,18 @@ export function RomeMapCanvas() {
           <path
             d="M 140,0 C 125,120 110,220 185,310 C 255,390 215,470 165,540"
             fill="none"
-            stroke="rgba(56, 189, 248, 0.18)"
+            stroke="var(--map-river)"
             strokeWidth="36"
             strokeLinecap="round"
           />
           <path
             d="M 140,0 C 125,120 110,220 185,310 C 255,390 215,470 165,540"
             fill="none"
-            stroke="rgba(56, 189, 248, 0.45)"
+            stroke="var(--map-river-line)"
             strokeWidth="2"
             strokeDasharray="6 6"
           />
-          <text x="72" y="275" fill="rgba(56, 189, 248, 0.5)" fontSize="10" fontFamily="Cinzel">
+          <text x="72" y="275" fill="var(--map-river-label)" fontSize="10" fontFamily="Cinzel">
             FLUMEN TIBERIS
           </text>
 
@@ -98,7 +100,7 @@ export function RomeMapCanvas() {
           <polyline
             points={routePoints}
             fill="none"
-            stroke="rgba(212, 175, 55, 0.45)"
+            stroke="var(--map-route)"
             strokeWidth="3"
             strokeDasharray="7 5"
           />
@@ -117,22 +119,22 @@ export function RomeMapCanvas() {
                 {isSelected && (
                   <circle
                     r="24"
-                    fill="rgba(212, 175, 55, 0.16)"
-                    stroke="#d4af37"
+                    fill="var(--gold-soft)"
+                    stroke="var(--gold-primary)"
                     strokeWidth="1.5"
                     strokeDasharray="3 3"
                   />
                 )}
                 <circle
                   r="14"
-                  fill={isSelected ? '#d4af37' : isVisited ? '#2b251c' : '#171411'}
-                  stroke="#d4af37"
+                  fill={isSelected ? 'var(--gold-primary)' : isVisited ? 'var(--map-pin-visited)' : 'var(--map-pin)'}
+                  stroke="var(--gold-primary)"
                   strokeWidth="2"
                 />
                 <text
                   textAnchor="middle"
                   dy="4"
-                  fill={isSelected ? '#0b0a09' : '#f5f2eb'}
+                  fill={isSelected ? 'var(--on-gold)' : 'var(--text-marble)'}
                   fontSize="11"
                   fontWeight="700"
                   fontFamily="JetBrains Mono"
@@ -145,14 +147,14 @@ export function RomeMapCanvas() {
                   width="156"
                   height="22"
                   rx="5"
-                  fill="rgba(14, 12, 10, 0.9)"
-                  stroke={isSelected ? '#d4af37' : 'rgba(255,255,255,0.12)'}
+                  fill="var(--map-label)"
+                  stroke={isSelected ? 'var(--gold-primary)' : 'var(--border-subtle)'}
                 />
                 <text
                   x="0"
                   y="35"
                   textAnchor="middle"
-                  fill={isSelected ? '#d4af37' : '#c8c1b4'}
+                  fill={isSelected ? 'var(--gold-primary)' : 'var(--text-travertine)'}
                   fontSize="10"
                   fontWeight="600"
                 >
@@ -166,7 +168,7 @@ export function RomeMapCanvas() {
           {gpsPosition && (
             <g transform={`translate(${gpsPosition.mapX}, ${gpsPosition.mapY})`}>
               <circle r="18" fill="rgba(56, 189, 248, 0.22)" />
-              <circle r="7" fill="#38bdf8" stroke="#0b0a09" strokeWidth="2" />
+              <circle r="7" fill="var(--cyan-gps)" stroke="var(--bg-obsidian)" strokeWidth="2" />
             </g>
           )}
         </svg>
@@ -175,8 +177,8 @@ export function RomeMapCanvas() {
           <div className="rome-map__hud-info">
             <span className="rome-map__hud-label">
               {isWalking
-                ? `WALKING ALONG VIA SACRA (${walkProgress}%)`
-                : `CURRENT STOP #${currentStop.order} • ${currentStop.era}`}
+                ? t('walking', { progress: walkProgress })
+                : t('currentStop', { order: currentStop.order, era: currentStop.era })}
             </span>
             <span className="rome-map__hud-stop">{currentStop.name}</span>
           </div>
@@ -184,12 +186,10 @@ export function RomeMapCanvas() {
           <button
             type="button"
             className="rome-map__arrive-btn"
-            disabled={isWalking}
+            disabled={isWalking || isChatPending || isVoiceRecording}
             onClick={confirmArrivalAtStop}
           >
-            {tourPhase === 'READY_TO_ARRIVE'
-              ? "📍 Simulate 'I Have Arrived'"
-              : '🔄 Replay Arrival Overview'}
+            {t(tourPhase === 'READY_TO_ARRIVE' ? 'arrivalButton' : 'replayArrival')}
           </button>
         </div>
       </div>

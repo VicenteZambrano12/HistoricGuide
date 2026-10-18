@@ -1,4 +1,3 @@
-import React from 'react';
 import './MonumentIllustration.css';
 
 export function MonumentIllustration({ stop }) {
@@ -8,7 +7,7 @@ export function MonumentIllustration({ stop }) {
     switch (id) {
       case 'torre-argentina':
         return (
-          <g stroke="#d4af37" strokeWidth="1.6" fill="none">
+          <g stroke="var(--gold-primary)" strokeWidth="1.6" fill="none">
             <rect x="40" y="95" width="320" height="16" fill="rgba(212,175,55,0.12)" />
             {[70, 115, 160, 205, 250, 295].map((x, i) => (
               <g key={i}>
@@ -27,7 +26,7 @@ export function MonumentIllustration({ stop }) {
         );
       case 'forum-boarium':
         return (
-          <g stroke="#d4af37" strokeWidth="1.6" fill="none">
+          <g stroke="var(--gold-primary)" strokeWidth="1.6" fill="none">
             <polygon points="55,45 115,18 175,45" fill="rgba(212,175,55,0.16)" />
             {[68, 95, 122, 149].map((x) => (
               <rect key={x} x={x} y="45" width="10" height="52" fill="rgba(212,175,55,0.1)" />
@@ -41,7 +40,7 @@ export function MonumentIllustration({ stop }) {
         );
       case 'roman-forum':
         return (
-          <g stroke="#d4af37" strokeWidth="1.6" fill="none">
+          <g stroke="var(--gold-primary)" strokeWidth="1.6" fill="none">
             <polygon points="130,38 200,12 270,38" fill="rgba(212,175,55,0.16)" />
             <rect x="142" y="38" width="116" height="60" fill="rgba(212,175,55,0.08)" />
             <rect x="184" y="62" width="32" height="36" fill="rgba(212,175,55,0.22)" />
@@ -53,7 +52,7 @@ export function MonumentIllustration({ stop }) {
         );
       case 'trajans-markets':
         return (
-          <g stroke="#d4af37" strokeWidth="1.6" fill="none">
+          <g stroke="var(--gold-primary)" strokeWidth="1.6" fill="none">
             <path d="M55,102 A145,75 0 0,1 345,102" fill="rgba(158,42,43,0.15)" />
             {[85, 125, 165, 205, 245, 285, 315].map((x) => (
               <path
@@ -68,7 +67,7 @@ export function MonumentIllustration({ stop }) {
       case 'pantheon':
       default:
         return (
-          <g stroke="#d4af37" strokeWidth="1.6" fill="none">
+          <g stroke="var(--gold-primary)" strokeWidth="1.6" fill="none">
             <path d="M75,78 A125,62 0 0,1 325,78 Z" fill="rgba(212,175,55,0.12)" />
             <polygon points="120,52 200,22 280,52" fill="rgba(212,175,55,0.2)" />
             {[132, 156, 180, 204, 228, 252, 268].map((x) => (
