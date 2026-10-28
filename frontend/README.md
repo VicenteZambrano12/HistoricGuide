@@ -76,6 +76,76 @@ stripping the `/api` prefix. Vite's development proxy is not part of the build.
 Run `npm test` for health-client tests, `npm run build` for the production build,
 and `npm run lint` for lint checks.
 
+## Client logging and error tracking
+
+[`src/lib/logger.js`](src/lib/logger.js) is the only application console sink.
+Use `logger.debug(event, context)`, `info`, `warn`, or `error`, with stable event
+names such as `http.request_failed` and structured metadata. Each record includes
+an ISO timestamp, uppercase level, event, and context. Vite production builds
+suppress DEBUG and INFO before serializing metadata; WARN and ERROR remain in
+the browser console. Nothing is sent to an external tracking service.
+ESLint rejects direct console calls outside the logger and tests.
+
+The logger serializes error names, messages, stacks, and causes, limits nested
+metadata, and redacts sensitive keys (including bodies, queries, credentials,
+tokens, and audio). URL query strings, fragments, and URL credentials are removed
+from logged strings. Do not pass personal information, user messages, raw
+request/response payloads, headers, or audio into log metadata: redaction is
+defense in depth, not a guarantee that arbitrary text contains no private data.
+Unreadable metadata produces a minimal `logger.serialization_failed` error
+instead of letting serialization crash the application.
+Console logs are not durable storage; centralized retention would require an
+explicitly configured, privacy-reviewed collection service.
+
+[`src/lib/http.js`](src/lib/http.js) wraps fetch and response consumption:
+
+```js
+return apiRequest('/api/health', { signal, cache: 'no-store' },
+  (response) => response.json());
+```
+
+It generates a fresh UUID per request and sends it in **both `X-Correlation-ID`
+and `X-Request-ID`**. The current FastAPI logger accepts/returns `X-Request-ID`
+and writes that value as `request_id` in server logs. If a response includes
+`X-Correlation-ID`, the client uses that as its correlation ID; otherwise it uses
+`X-Request-ID`, then the generated UUID. Both server IDs and the original client
+ID are retained when they differ. Unusable response IDs warn and fall back.
+Trace context stays per request, including concurrent requests, HTTP failures,
+JSON decoding, and the complete chat stream. Audio blobs retain the originating
+trace for subsequent playback-error logs. `getErrorContext(error)` retrieves
+trace metadata without mutating errors. Chat failures show an error reference
+that can be matched against the console and backend logs.
+
+Outgoing requests, response headers, and completed body consumption are separate
+events with method, route, status, and elapsed milliseconds. No request bodies
+or successful response bodies are logged. Expected cancellation logs at DEBUG;
+timeouts and failed requests log at ERROR. Existing response shapes, multipart
+boundaries, cancellation, and timeouts are preserved.
+
+The same-origin `/api` proxy must forward both trace request and response
+headers. A future cross-origin deployment must allow both custom request
+headers and expose `X-Correlation-ID` and `X-Request-ID` through CORS. This change
+does not modify backend middleware or CORS settings.
+
+[`ErrorBoundary`](src/components/ErrorBoundary/ErrorBoundary.jsx) surrounds the
+whole app, including its provider and layout. Render crashes log the React
+component stack and show a theme-aware English/Spanish recovery screen with
+retry, reload, and an error reference. A render-only reference is a client
+incident ID, not a backend trace unless the error originated in a traced request.
+Retry remounts the app and can clear the current conversation.
+
+[`src/lib/globalErrors.js`](src/lib/globalErrors.js) installs `error` and
+`unhandledrejection` listeners before rendering. It also reports resource-loading
+failures without logging asset URLs. Listeners are idempotent and cleaned up on
+Vite hot disposal; browser default error reporting is not suppressed.
+Async errors are logged without replacing an otherwise working tour. Rendering
+errors are handled by the boundary; microphone and playback failures keep their
+existing inline error states and also use structured logging.
+
+Run `npm test` for logger redaction, production-level filtering, global listener
+cleanup, concurrent request tracing, stream errors, cancellation, and existing
+API behavior; use `npm run build` to validate production compilation.
+
 ## Chat
 
 The transcript starts empty and clears on reset, without prefilled welcome or

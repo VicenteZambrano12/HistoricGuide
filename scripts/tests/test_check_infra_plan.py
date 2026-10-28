@@ -352,12 +352,35 @@ class InfrastructurePlanTests(unittest.TestCase):
     def test_public_invoker_cannot_target_another_service_role_or_member(self) -> None:
         for fields in (
             {"service": "portfolio"}, {"project": "other-project"},
+            {"service": "v1/projects/other-project/locations/europe-southwest1/services/historicguide-backend"},
+            {"service": "v1/projects/basicrahgapp/locations/us-central1/services/historicguide-backend"},
+            {"service": "v1/projects/basicrahgapp/locations/europe-southwest1/services/portfolio"},
+            {"service": "v1/projects/basicrahgapp/locations/europe-southwest1/services/historicguide-backend-extra"},
             {"role": "roles/run.admin"}, {"member": "allAuthenticatedUsers"},
         ):
             with self.subTest(fields=fields), self.assertRaises(ValueError):
                 plan = copy.deepcopy(self.plan)
                 plan["resource_changes"][4]["change"]["after"].update(fields)
                 check_plan(plan)
+
+    def test_refreshed_public_invoker_full_service_path_allows_image_update(self) -> None:
+        public = self.plan["resource_changes"][4]["change"]
+        public["actions"] = ["no-op"]
+        public["after"]["service"] = (
+            "v1/projects/basicrahgapp/locations/europe-southwest1/services/historicguide-backend"
+        )
+        self.plan["resource_changes"][3]["change"]["actions"] = ["update"]
+        check_plan(self.plan)
+
+    def test_refreshed_public_invoker_does_not_allow_iam_mutations(self) -> None:
+        public = self.plan["resource_changes"][4]["change"]
+        public["after"]["service"] = (
+            "v1/projects/basicrahgapp/locations/europe-southwest1/services/historicguide-backend"
+        )
+        for actions in (["update"], ["delete"], ["delete", "create"]):
+            with self.subTest(actions=actions), self.assertRaises(ValueError):
+                public["actions"] = actions
+                check_plan(self.plan)
 
 
 if __name__ == "__main__":

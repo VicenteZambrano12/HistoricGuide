@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { logger } from '../lib/logger.js';
 
 export function useVoiceRecorder(onRecorded, onActiveChange) {
   const sessionRef = useRef(null);
@@ -22,6 +23,7 @@ export function useVoiceRecorder(onRecorded, onActiveChange) {
     if (sessionRef.current) return;
     setError(null);
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      logger.warn('voice.recording_unsupported');
       setError({ key: 'recordingUnsupported' });
       return;
     }
@@ -33,6 +35,7 @@ export function useVoiceRecorder(onRecorded, onActiveChange) {
 
     const fail = (message) => {
       if (sessionRef.current !== session) return;
+      logger.warn('voice.recording_failed', { reason: message.key });
       cancel();
       setStatus('idle');
       setError(message);
@@ -73,6 +76,7 @@ export function useVoiceRecorder(onRecorded, onActiveChange) {
         onActiveChange(false);
         setStatus('idle');
         if (!size) {
+          logger.warn('voice.recording_empty');
           setError({ key: 'recordingEmpty' });
           return;
         }
@@ -85,6 +89,9 @@ export function useVoiceRecorder(onRecorded, onActiveChange) {
       recorder.start(1000);
       setStatus('recording');
     } catch (recordingError) {
+      if (sessionRef.current === session) {
+        logger.warn('voice.microphone_failed', { error: recordingError });
+      }
       fail({ key: 'microphoneError', values: { detail: recordingError.message } });
     }
   }, [cancel, onRecorded, onActiveChange]);

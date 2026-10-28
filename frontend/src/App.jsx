@@ -4,6 +4,7 @@ import { MainLayout } from './layouts/MainLayout/MainLayout';
 import { AppRouter } from './router/AppRouter';
 import { checkBackendHealth } from './lib/api';
 import { saveTheme } from './lib/theme';
+import { logger } from './lib/logger.js';
 import './App.css';
 
 export function App() {
@@ -23,7 +24,7 @@ export function App() {
 
     checkBackendHealth(controller.signal).catch((error) => {
       if (controller.signal.aborted) return;
-      console.error('Backend health check failed:', error);
+      logger.warn('app.backend_unavailable', { error });
     });
 
     return () => controller.abort();

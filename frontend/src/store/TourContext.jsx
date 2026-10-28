@@ -5,6 +5,7 @@ import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis';
 import { useGpsSimulation } from '../hooks/useGpsSimulation';
 import { sendChatRequest } from '../lib/api';
 import { TRANSLATIONS, getTranslator, getSavedLanguage, saveLanguage } from '../i18n/translations';
+import { getErrorContext, logger } from '../lib/logger.js';
 
 const TourContext = createContext(null);
 
@@ -141,8 +142,13 @@ export function TourProvider({ children }) {
       return true;
     } catch (error) {
       if (!controller.signal.aborted) {
-        setChatError(error instanceof TypeError || error.name === 'TimeoutError' || error instanceof SyntaxError
-          ? t('chatConnectionError', { detail: error.message }) : error.message);
+        const { correlationId } = getErrorContext(error);
+        if (!correlationId) logger.warn('chat.input_failed', { error });
+        const message = error instanceof TypeError || error.name === 'TimeoutError' || error instanceof SyntaxError
+          ? t('chatConnectionError', { detail: error.message }) : error.message;
+        setChatError(correlationId
+          ? `${message} ${t('errorReference', { reference: correlationId })}`
+          : message);
       }
       return false;
     } finally {

@@ -1,5 +1,10 @@
 {
   "appName": "Plinius",
+  "crashTitle": "Tu paseo se ha interrumpido",
+  "crashDescription": "El guía no pudo mostrar esta página. Intenta abrir el recorrido de nuevo. Si el problema continúa, recarga la página. La conversación actual podría borrarse.",
+  "crashRetry": "Abrir el recorrido de nuevo",
+  "crashReload": "Recargar página",
+  "errorReference": "Referencia del error: {reference}",
   "appTagline": "Tu compañía por la antigua Roma",
   "skipToTour": "Saltar al recorrido",
   "tourPosition": "Tu paseo por Roma, parada {order} de {total}",

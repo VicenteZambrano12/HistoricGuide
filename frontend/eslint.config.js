@@ -7,6 +7,11 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 export default defineConfig([
   globalIgnores(['dist']),
   {
+    files: ['src/**/*.{js,jsx}'],
+    ignores: ['src/lib/logger.js', 'src/**/*.test.js'],
+    rules: { 'no-console': 'error' },
+  },
+  {
     files: ['**/*.{js,jsx}'],
     extends: [
       js.configs.recommended,

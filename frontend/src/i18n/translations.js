@@ -1,5 +1,6 @@
 import en from './en.json' with { type: 'json' };
 import es from './es.json' with { type: 'json' };
+import { logger } from '../lib/logger.js';
 
 export const TRANSLATIONS = { en, es };
 export const LANGUAGE_STORAGE_KEY = 'plinius-language';
@@ -21,7 +22,7 @@ export function getSavedLanguage(storage) {
   try {
     return storage.getItem(LANGUAGE_STORAGE_KEY) === 'es' ? 'es' : 'en';
   } catch (error) {
-    console.warn('Unable to read the saved language; using English.', error);
+    logger.warn('preferences.language_read_failed', { error });
     return 'en';
   }
 }
@@ -31,6 +32,6 @@ export function saveLanguage(language, storage) {
   try {
     storage.setItem(LANGUAGE_STORAGE_KEY, language);
   } catch (error) {
-    console.warn('Unable to save the language; it will only apply to this visit.', error);
+    logger.warn('preferences.language_save_failed', { error });
   }
 }

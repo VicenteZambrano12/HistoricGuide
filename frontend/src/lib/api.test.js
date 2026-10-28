@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { beforeEach, test } from 'node:test';
 import { checkBackendHealth, sendChatRequest } from './api.js';
 import { ROME_STOPS } from './romeStopsData.js';
+import { logger } from './logger.js';
+
+beforeEach((t) => {
+  for (const level of ['debug', 'info', 'warn', 'error']) t.mock.method(logger, level, () => {});
+});
 
 test('checks the backend health endpoint without caching', async (t) => {
   const fetchMock = t.mock.method(globalThis, 'fetch', async (url, options) => {
@@ -221,7 +226,9 @@ test('sends all chat fields as multipart in every mode for both topics', async (
       const fetchMock = t.mock.method(globalThis, 'fetch', async (url, options) => {
         assert.equal(url, '/api/chat');
         assert.equal(options.method, 'POST');
-        assert.equal(options.headers, undefined);
+        assert.equal(options.headers.has('Content-Type'), false);
+        assert.equal(options.headers.get('X-Correlation-ID'), options.headers.get('X-Request-ID'));
+        assert.match(options.headers.get('X-Request-ID'), /^[0-9a-f-]{36}$/);
         assert.ok(options.signal instanceof AbortSignal);
         const fields = options.body;
         assert.ok(fields instanceof FormData);

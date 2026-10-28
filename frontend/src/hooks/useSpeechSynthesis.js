@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { logger } from '../lib/logger.js';
 
 export function useSpeechSynthesis(language = 'en') {
   const [audioEnabled, setAudioEnabled] = useState(false);
@@ -33,7 +34,12 @@ export function useSpeechSynthesis(language = 'en') {
 
       utterance.onstart = () => setIsSpeaking(true);
       utterance.onend = () => setIsSpeaking(false);
-      utterance.onerror = () => setIsSpeaking(false);
+      utterance.onerror = (event) => {
+        setIsSpeaking(false);
+        if (!['canceled', 'interrupted'].includes(event.error)) {
+          logger.warn('voice.synthesis_failed', { reason: event.error });
+        }
+      };
 
       window.speechSynthesis.speak(utterance);
     },

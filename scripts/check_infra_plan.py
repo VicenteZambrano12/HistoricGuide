@@ -11,6 +11,10 @@ REGISTRY_ADDRESS = "module.artifact_registry.google_artifact_registry_repository
 REGISTRY_ID = "projects/basicrahgapp/locations/europe-southwest1/repositories/historicguide-repo"
 CLOUDRUN_ADDRESS = "module.cloudrun.google_cloud_run_v2_service.backend"
 PUBLIC_ADDRESS = "module.cloudrun.google_cloud_run_service_iam_member.public_access"
+PUBLIC_SERVICE_NAMES = {
+    "historicguide-backend",
+    "v1/projects/basicrahgapp/locations/europe-southwest1/services/historicguide-backend",
+}
 IMAGE_PATTERN = r"europe-southwest1-docker\.pkg\.dev/basicrahgapp/historicguide-repo/historicguide@sha256:[0-9a-f]{64}"
 
 
@@ -179,9 +183,10 @@ def check_plan(plan: dict) -> None:
                 resource.get("type") != "google_cloud_run_service_iam_member"
                 or change.get("actions") not in (["create"], ["no-op"])
                 or change.get("importing") is not None
+                or after.get("service") not in PUBLIC_SERVICE_NAMES
                 or any(after.get(key) != value for key, value in {
                     "project": "basicrahgapp", "location": "europe-southwest1",
-                    "service": "historicguide-backend", "role": "roles/run.invoker", "member": "allUsers",
+                    "role": "roles/run.invoker", "member": "allUsers",
                 }.items())
             ):
                 raise ValueError("Only the example's public invoker on historicguide-backend is allowed.")

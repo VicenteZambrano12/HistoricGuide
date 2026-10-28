@@ -457,6 +457,10 @@ resource already in this state.
   unrelated network resources or assume a healthy HTTP process means chat works.
 - Unexpected changes in the plan: **do not approve** or weaken the checker.
   Compare the live resource metadata to its module and fix the mismatch.
+- The public-invoker checker accepts the initial short service name and the
+  provider's refreshed `v1/projects/basicrahgapp/locations/europe-southwest1/services/historicguide-backend`
+  path. These identify the same service; other services, projects, regions,
+  roles, members, and IAM updates remain forbidden.
 - Do not use `terraform init -migrate-state`, copy example state, force-unlock
   an active run, run local apply, or use `-target` to bypass the restricted root.
 
