@@ -9,8 +9,11 @@ and creates **`historicguide-backend` in `europe-southwest1`** through the exist
 workflow. It follows the Cloud Run example: public frontend/API, 2 CPU / 2 GiB,
 and minimum/maximum one instance. The minimum instance incurs ongoing idle costs.
 It retains **two images total**, not a current image plus two previous ones.
-It does not upload secret versions, create Qdrant/network resources, or activate
-the other example modules. Other applications' infrastructure is not changed.
+It does not upload secret versions or create Qdrant/network resources.
+Only the storage, secrets, Artifact Registry, and Cloud Run modules are retained.
+The unused networking example has been removed: the existing VPC, subnets,
+firewall rules, and Qdrant VM remain externally managed.
+Other applications' infrastructure is not changed.
 
 The existing workflow, [terraform-deploy.yml](../.github/workflows/terraform-deploy.yml),
 keeps its original sequence: merge a same-repository `dev` PR into `main`,
@@ -388,9 +391,9 @@ git push -u origin dev
 ```
 
 Confirm you are on `dev` before committing. Never stage `.env`, the
-service-account JSON, `.terraform/`, a plan file, or state files. The empty
-example `terraform.tfvars` is not needed; configuration comes from the two
-GitHub repository variables.
+service-account JSON, `.terraform/`, a plan file, or state files.
+Configuration comes from the two GitHub repository variables and the
+workflow-resolved application image digest; no `terraform.tfvars` file is needed.
 
 ## 4. Merge and approve through GitHub
 

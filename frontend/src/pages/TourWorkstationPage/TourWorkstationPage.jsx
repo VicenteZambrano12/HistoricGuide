@@ -1,4 +1,3 @@
-import React from 'react';
 import { useTour } from '../../store/TourContext';
 import { StopTimelineBar } from '../../features/map/StopTimelineBar/StopTimelineBar';
 import { RomeMapCanvas } from '../../features/map/RomeMapCanvas/RomeMapCanvas';
@@ -20,12 +19,9 @@ export function TourWorkstationPage() {
       <StopTimelineBar />
 
       <div className="workstation-page__grid">
-        <div className="workstation-page__left">
-          <RomeMapCanvas />
-          <RagTelemetryDrawer />
-        </div>
-
+        <RomeMapCanvas />
         <HistorianVoicePanel />
+        <RagTelemetryDrawer />
       </div>
     </div>
   );

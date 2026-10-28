@@ -1,6 +1,8 @@
 import './MonumentIllustration.css';
+import { useTour } from '../../store/TourContext';
 
 export function MonumentIllustration({ stop }) {
+  const { t, stops } = useTour();
   if (!stop) return null;
 
   const renderArchitecturalVector = (id) => {
@@ -80,24 +82,18 @@ export function MonumentIllustration({ stop }) {
   };
 
   return (
-    <div className="monument-art">
-      <svg className="monument-art__svg" viewBox="0 0 400 130" preserveAspectRatio="xMidYMid slice">
-        <defs>
-          <radialGradient id="goldGlow" cx="50%" cy="30%" r="65%">
-            <stop offset="0%" stopColor="rgba(212, 175, 55, 0.25)" />
-            <stop offset="100%" stopColor="rgba(11, 10, 9, 0)" />
-          </radialGradient>
-        </defs>
-        <rect width="400" height="130" fill="url(#goldGlow)" />
+    <header className="monument-art">
+      <div className="monument-art__copy">
+        <span className="monument-art__era">
+          {t('tourPosition', { order: stop.order, total: stops.length })}
+        </span>
+        <h1 className="monument-art__name">{stop.name}</h1>
+        <p className="monument-art__sub">{stop.subtitle}</p>
+        <p className="monument-art__date">{stop.era}</p>
+      </div>
+      <svg className="monument-art__svg" viewBox="0 0 400 130" aria-hidden="true">
         {renderArchitecturalVector(stop.id)}
       </svg>
-      <div className="monument-art__overlay">
-        <span className="monument-art__era">
-          STOP #{stop.order} • {stop.era}
-        </span>
-        <h3 className="monument-art__name">{stop.name}</h3>
-        <p className="monument-art__sub">{stop.subtitle}</p>
-      </div>
-    </div>
+    </header>
   );
 }
