@@ -1,5 +1,10 @@
 {
   "appName": "Plinius",
+  "crashTitle": "Your walk was interrupted",
+  "crashDescription": "The guide could not display this page. Try opening the tour again. If the problem continues, reload the page. Your current conversation may be cleared.",
+  "crashRetry": "Open the tour again",
+  "crashReload": "Reload page",
+  "errorReference": "Error reference: {reference}",
   "appTagline": "Your companion through ancient Rome",
   "skipToTour": "Skip to the tour",
   "tourPosition": "Your Roman walk, stop {order} of {total}",

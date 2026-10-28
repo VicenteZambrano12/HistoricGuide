@@ -135,6 +135,8 @@ test('blocked storage warns but does not prevent language changes', (t) => {
   assert.equal(getSavedLanguage(storage), 'en');
   assert.doesNotThrow(() => saveLanguage('es', storage));
   assert.equal(warnings.length, 2);
-  assert.equal(warnings[0][1], error);
-  assert.equal(warnings[1][1], error);
+  assert.equal(warnings[0][1].event, 'preferences.language_read_failed');
+  assert.equal(warnings[1][1].event, 'preferences.language_save_failed');
+  assert.equal(warnings[0][1].context.error.message, error.message);
+  assert.equal(warnings[1][1].context.error.message, error.message);
 });

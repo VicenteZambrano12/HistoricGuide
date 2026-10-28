@@ -1,4 +1,6 @@
 import { parsePdfSources } from './pdfSources.js';
+import { getTranslator } from '../i18n/translations.js';
+import { apiRequest } from './http.js';
 
 function sourceMetadata(sources, t) {
   if (sources === undefined) return {};
@@ -11,21 +13,20 @@ function sourceMetadata(sources, t) {
 
 export async function checkBackendHealth(signal) {
   const timeoutSignal = AbortSignal.timeout(5000);
-  const response = await fetch('/api/health', {
+  return apiRequest('/api/health', {
     signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
     cache: 'no-store'
+  }, async (response) => {
+    if (!response.ok) {
+      throw new Error(`Health check failed (HTTP ${response.status}).`);
+    }
+
+    const data = await response.json();
+    if (data?.status !== 'ok') {
+      throw new Error('Health check returned an unexpected response.');
+    }
+    return data;
   });
-
-  if (!response.ok) {
-    throw new Error(`Health check failed (HTTP ${response.status}).`);
-  }
-
-  const data = await response.json();
-  if (data?.status !== 'ok') {
-    throw new Error('Health check returned an unexpected response.');
-  }
-
-  return data;
 }
 
 export async function sendChatRequest({ stop, requestType, mode, query, language = 'EN', onProgress }, signal) {
@@ -68,12 +69,14 @@ export async function sendChatRequest({ stop, requestType, mode, query, language
   }
 
   const timeoutSignal = AbortSignal.timeout(120_000);
-  const response = await fetch('/api/chat', {
+  return apiRequest('/api/chat', {
     method: 'POST',
     body,
     signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
-  });
+  }, (response) => consumeChatResponse(response, mode, onProgress, t));
+}
 
+async function consumeChatResponse(response, mode, onProgress, t) {
   if (!response.ok) {
     let detail;
     if (response.headers.get('content-type')?.includes('application/json')) {
@@ -176,4 +179,3 @@ async function readChatStream(response, mode, onProgress, t) {
     reader.releaseLock();
   }
 }
-import { getTranslator } from '../i18n/translations.js';

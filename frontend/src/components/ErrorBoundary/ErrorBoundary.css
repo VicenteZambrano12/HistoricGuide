@@ -1,0 +1,61 @@
+.error-boundary {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.error-boundary__panel {
+  width: min(100%, 36rem);
+  padding: clamp(1.5rem, 5vw, 3rem);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+}
+
+.error-boundary__brand {
+  color: var(--gold-primary);
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+}
+
+.error-boundary h1 {
+  margin: 1rem 0;
+  font: 400 clamp(1.75rem, 4vw, 2.5rem) / 1.2 var(--font-display);
+}
+
+.error-boundary p {
+  color: var(--text-travertine);
+  line-height: 1.7;
+}
+
+.error-boundary__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1.5rem 0;
+}
+
+.error-boundary button {
+  min-height: 44px;
+  padding: 0.65rem 1rem;
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--gold-primary);
+  cursor: pointer;
+}
+
+.error-boundary button:first-child {
+  background: var(--gold-primary);
+  color: var(--on-gold);
+}
+
+.error-boundary button:hover {
+  box-shadow: 0 0 0 3px var(--gold-soft);
+}
+
+.error-boundary__reference {
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}

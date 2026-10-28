@@ -34,6 +34,8 @@ test('storage failures warn without preventing theme changes', (t) => {
   assert.equal(getSavedTheme(storage), 'dark');
   assert.doesNotThrow(() => saveTheme('light', storage));
   assert.equal(warnings.length, 2);
-  assert.equal(warnings[0][1], error);
-  assert.equal(warnings[1][1], error);
+  assert.equal(warnings[0][1].event, 'preferences.theme_read_failed');
+  assert.equal(warnings[1][1].event, 'preferences.theme_save_failed');
+  assert.equal(warnings[0][1].context.error.message, error.message);
+  assert.equal(warnings[1][1].context.error.message, error.message);
 });

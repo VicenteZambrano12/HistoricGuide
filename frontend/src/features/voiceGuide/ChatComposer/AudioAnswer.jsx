@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTour } from '../../../store/TourContext';
 import { ChatIcon } from '../../../components/ChatIcon/ChatIcon';
+import { getErrorContext, logger } from '../../../lib/logger.js';
 import './AudioAnswer.css';
 
 function formatTime(seconds) {
@@ -47,10 +48,13 @@ export function AudioAnswer({ audio, autoPlay = false }) {
     autoplayAttempted.current = true;
     let cancelled = false;
     playerRef.current.play().catch((error) => {
-      if (!cancelled && error.name !== 'AbortError') setPlaybackError('playbackError');
+      if (!cancelled && error.name !== 'AbortError') {
+        logger.warn('audio.autoplay_failed', { ...getErrorContext(audio), error });
+        setPlaybackError('playbackError');
+      }
     });
     return () => { cancelled = true; };
-  }, [autoPlay, audioEnabled, playbackBlocked]);
+  }, [autoPlay, audioEnabled, playbackBlocked, audio]);
 
   const togglePlayback = async () => {
     const player = playerRef.current;
@@ -62,7 +66,10 @@ export function AudioAnswer({ audio, autoPlay = false }) {
     try {
       await player.play();
     } catch (error) {
-      if (error.name !== 'AbortError') setPlaybackError('playbackError');
+      if (error.name !== 'AbortError') {
+        logger.warn('audio.playback_failed', { ...getErrorContext(audio), error });
+        setPlaybackError('playbackError');
+      }
     }
   };
 
@@ -83,7 +90,10 @@ export function AudioAnswer({ audio, autoPlay = false }) {
           const value = event.currentTarget.duration;
           setDuration(Number.isFinite(value) ? value : 0);
         }}
-        onError={() => setPlaybackError('playbackError')}
+        onError={(event) => {
+          logger.error('audio.media_failed', { ...getErrorContext(audio), code: event.currentTarget.error?.code });
+          setPlaybackError('playbackError');
+        }}
       />
       <button
         type="button"
