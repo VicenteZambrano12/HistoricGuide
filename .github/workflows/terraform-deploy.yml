@@ -6,6 +6,8 @@ on:
     branches: [main]
 
 env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION }}
   TF_WORKING_DIR: infra/environments/prod
   TF_IN_AUTOMATION: "true"
   TF_VERSION: "1.13.5"
@@ -22,18 +24,35 @@ defaults:
 
 jobs:
   build-and-plan:
-    name: Plan bucket and empty application secret
+    name: Plan infrastructure and image publication
     if: github.event.pull_request.merged == true && github.head_ref == 'dev' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
+    outputs:
+      app_changed: ${{ steps.filter.outputs.app }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Check for source changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            app:
+              - 'frontend/**'
+              - 'backend/src/**'
+              - 'backend/pyproject.toml'
+              - 'backend/uv.lock'
+              - 'Dockerfile'
+              - '.dockerignore'
+              - '.github/workflows/terraform-deploy.yml'
 
       - name: Check configuration
         env:
@@ -62,7 +81,7 @@ jobs:
 
       - name: Terraform Format
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform fmt -check . ../../modules/storage ../../modules/secrets
+        run: terraform fmt -check . ../../modules/storage ../../modules/secrets ../../modules/artifact_registry
 
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -103,6 +122,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    outputs:
+      image: ${{ steps.published.outputs.image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -138,3 +159,68 @@ jobs:
       - name: Terraform Apply
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -input=false -lock-timeout=60s tfplan
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Set image tag and build flag
+        id: image
+        env:
+          APP_CHANGED: ${{ needs.build-and-plan.outputs.app_changed }}
+        run: |
+          python3 scripts/registry_images.py select \
+            --image-base "$(terraform -chdir="$TF_WORKING_DIR" output -raw artifact_registry_image)" \
+            --sha "$GITHUB_SHA" --source-changed "$APP_CHANGED"
+
+      - name: Set up Docker Buildx
+        if: steps.image.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        if: steps.image.outputs.build == 'true'
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+            --load --tag "$IMAGE" .
+
+      - name: Push Docker image
+        if: steps.image.outputs.build == 'true'
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: docker push "$IMAGE"
+
+      - name: Resolve immutable application image
+        id: published
+        env:
+          SELECTED_IMAGE: ${{ steps.image.outputs.image }}
+          IMAGE_BASE: ${{ steps.image.outputs.image_base }}
+          BUILT: ${{ steps.image.outputs.build }}
+        run: |
+          IMAGE="$SELECTED_IMAGE"
+          if [[ "$BUILT" == "true" ]]; then
+            IMAGE="$(docker image inspect --format '{{index .RepoDigests 0}}' "$SELECTED_IMAGE")"
+          fi
+          if [[ "$IMAGE" != "$IMAGE_BASE@"* || ! "$IMAGE" =~ @sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::The image must resolve to a digest in the HistoricGuide package."
+            exit 1
+          fi
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Retain only the two newest application images
+        env:
+          IMAGE: ${{ steps.published.outputs.image }}
+          IMAGE_BASE: ${{ steps.image.outputs.image_base }}
+        run: |
+          python3 scripts/registry_images.py prune \
+            --image-base "$IMAGE_BASE" --keep-digest "${IMAGE##*@}"
+
+      - name: Record published image
+        env:
+          IMAGE: ${{ steps.published.outputs.image }}
+        run: |
+          printf '## HistoricGuide image\n\n`%s`\n\nRetention: two newest images total.\n' \
+            "$IMAGE" >> "$GITHUB_STEP_SUMMARY"

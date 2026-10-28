@@ -1,19 +1,23 @@
 # HistoricGuide Terraform migration
 
-The first stage adopted the existing `gs://historic-guide` bucket in
-`basicrahgapp`, region `europe-southwest1`. The current stage keeps that bucket
-unchanged and creates **one empty global Secret Manager secret**,
-`historicguide-secrets`, with automatic replication.
+Earlier stages adopted `gs://historic-guide` and created the global
+`historicguide-secrets` container in `basicrahgapp`. Its JSON versions were
+populated separately through the CLI; Terraform manages only secret metadata.
 
-The secret is reserved for a future single JSON object containing application
-configuration. This stage creates **no secret version, JSON payload, or runtime
-accessor IAM binding**. It does not read `.env`, copy objects, deploy the
-application, create Qdrant resources, or activate the other example modules.
-The existing example secrets for other applications are not imported or changed.
+The current stage preserves those resources and adopts the dedicated Docker
+repository **`historicguide-repo` in `europe-southwest1`**, then builds and
+publishes the single application image through the existing workflow.
+It retains **two images total**, not a current image plus two previous ones.
+It does not read `.env`, change secret versions or IAM through Terraform,
+deploy Cloud Run, create Qdrant resources, or activate the other example
+modules. Other applications' repositories, images, and secrets are untouched.
 
 The existing workflow, [terraform-deploy.yml](../.github/workflows/terraform-deploy.yml),
 keeps its original sequence: merge a same-repository `dev` PR into `main`,
 plan, upload the saved plan, then apply that exact plan in the `prod` environment.
+Image publication follows apply so the repository import and cleanup policies
+are reviewed before its first Docker push. Both jobs remain in the same workflow and use its existing
+approval gate; no separate deployment workflow is introduced.
 It does not run on a push, an unmerged PR close, a differently named source branch,
 or a manual Actions dispatch.
 
@@ -31,26 +35,31 @@ or a manual Actions dispatch.
 - No new labels are added. Terraform attribution labels are disabled so that
   adoption does not require updating the bucket.
 - `prevent_destroy = true` and `force_destroy = false` protect the bucket.
-- The [plan checker](../scripts/check_infra_plan.py) allows exactly the bucket
-  and `module.secrets.google_secret_manager_secret.app_secrets`. The bucket
+- The [plan checker](../scripts/check_infra_plan.py) allows exactly the bucket,
+  `module.secrets.google_secret_manager_secret.app_secrets`, and
+  `module.artifact_registry.google_artifact_registry_repository.default`. The bucket
   must remain unchanged, with an optional import of `historic-guide`. The
   global `historicguide-secrets` secret may be created or remain unchanged;
   updates, deletion, replacement, imports of other secrets, extra resources,
   moves, incomplete plans, and deferred changes are rejected before upload and
-  again before apply. Secret-version and IAM resources are not allowed.
+  again before apply. The dedicated repository may be imported or unchanged;
+  only its cleanup policies may change during import. Its two-image cleanup
+  policies are enforced. Secret-version, IAM, and Cloud
+  Run resources are not allowed.
 - The secret also uses `prevent_destroy = true`. Only its metadata enters
   Terraform state; there is no secret value in configuration, plans, or state.
 - Bucket objects and bucket IAM are deliberately outside Terraform in this
   step. Existing runtime access and all PDFs/prompts remain unchanged.
 - The backend bucket itself is pre-existing bootstrap infrastructure; this
-  configuration does not import it. The expected cloud writes are state/locks
-  and creation of the empty application secret.
+  configuration does not import it. The expected cloud writes are state/locks,
+  repository import/cleanup-policy updates, image uploads, and removal of application images beyond
+  the newest two.
 
 ## 1. One-time GCP bootstrap (manual)
 
 The initial bucket bootstrap is already configured for this repository. The
 commands below document that setup; do not recreate verified existing resources.
-For the secrets stage, the additional permissions are documented in **1d**.
+Secret permissions are documented in **1d** and registry permissions in **1e**.
 Use an administrator identity authorized to create WIF providers/custom roles
 and add IAM bindings. These are **not** workflow steps:
 GitHub needs these permissions before Terraform can authenticate or store state.
@@ -183,16 +192,81 @@ reported as missing, allow IAM propagation and retry only the failed binding.
 Do not run `gcloud secrets create`: creation belongs to the reviewed Terraform
 plan and apply.
 
-Later, upload one JSON payload as a secret version through an explicitly
-authorized secret-value workflow and wire runtime access separately. Do not
+The JSON payload was uploaded separately through the CLI; runtime access is
+still a separate migration step. Do not
 put real values in Terraform variables, source files, commits, or plan artifacts.
+
+### 1e. Repository-scoped publishing and retention permissions
+
+The Artifact Registry API must already be enabled. Unlike Secret Manager and
+Storage, Artifact Registry does not support resource-name IAM conditions for
+this bootstrap. To avoid granting project-wide image access, the empty
+repository was explicitly approved for one-time CLI creation. The workflow
+imports it into Terraform state, configures retention, and publishes the image.
+Only the empty repository and its IAM binding were created ahead of the PR;
+no image was uploaded.
+
+The following commands document that administrator bootstrap. Do not recreate
+the repository if it already exists:
+
+```sh
+gcloud artifacts repositories create historicguide-repo \
+  --project=basicrahgapp --location=europe-southwest1 \
+  --repository-format=docker \
+  --description="HistoricGuide Docker images managed by Terraform"
+
+gcloud iam roles create historicGuideRegistryImages \
+  --project=basicrahgapp \
+  --title="HistoricGuide Docker publishing and retention" \
+  --description="Docker publishing, cleanup metadata and old-version deletion; bound only on the application repository" \
+  --permissions=artifactregistry.repositories.get,artifactregistry.repositories.update,artifactregistry.repositories.downloadArtifacts,artifactregistry.repositories.uploadArtifacts,artifactregistry.dockerimages.get,artifactregistry.dockerimages.list,artifactregistry.packages.get,artifactregistry.packages.list,artifactregistry.files.get,artifactregistry.files.list,artifactregistry.files.download,artifactregistry.files.upload,artifactregistry.tags.create,artifactregistry.tags.get,artifactregistry.tags.list,artifactregistry.tags.update,artifactregistry.tags.delete,artifactregistry.versions.get,artifactregistry.versions.list,artifactregistry.versions.delete \
+  --stage=GA
+
+gcloud artifacts repositories add-iam-policy-binding historicguide-repo \
+  --project=basicrahgapp --location=europe-southwest1 \
+  --member="serviceAccount:historicguide@basicrahgapp.iam.gserviceaccount.com" \
+  --role="projects/basicrahgapp/roles/historicGuideRegistryImages"
+```
+
+The account can read/update repository metadata and publish/prune images only
+in this repository. It cannot create/delete repositories, change IAM, or access
+other repositories' images. No project-level Artifact Registry role is granted.
+The import block uses
+`projects/basicrahgapp/locations/europe-southwest1/repositories/historicguide-repo`.
+
+### Image selection and two-image expiration rule
+
+The image base is
+`europe-southwest1-docker.pkg.dev/basicrahgapp/historicguide-repo/historicguide`.
+New builds are tagged with the full workflow commit SHA. The workflow retains
+the original application path filtering: changed application sources build a
+new image unless that SHA already exists; infrastructure-only changes reuse
+the newest digest. An empty repository always causes a build.
+
+After push, the workflow resolves an immutable `@sha256:...` image reference.
+The [image helper](../scripts/registry_images.py) lists only this application
+package, orders versions by creation time, deletes older digests including
+their tags, and verifies that the newest two remain (or one after the first
+push). It fails without deleting anything if the selected digest is missing
+or older than those two. Failed API calls and failed retention checks fail
+the workflow rather than reporting success.
+
+Terraform also preserves the example's native cleanup rule: `KEEP` the two
+most recent `historicguide` versions and `DELETE` older versions, including
+tagged ones. Native cleanup is asynchronous; the workflow's explicit prune
+enforces the cap immediately after successful publication. Buildx disables
+provenance/SBOM side manifests and builds only `linux/amd64` so retention counts
+application images rather than extra attestation artifacts.
+
+The published digest is recorded in the job summary. The workflow does not
+deploy it to Cloud Run or read the application JSON secret.
 
 ## 2. Configure GitHub before merging
 
 Open [repository settings](https://github.com/VicenteZambrano12/HistoricGuide/settings).
 
 1. **Actions → General:** ensure Actions and the referenced checkout, Google,
-   HashiCorp, and artifact actions are allowed.
+   HashiCorp, Docker Buildx, path-filter, and artifact actions are allowed.
 2. **Secrets and variables → Actions → Variables:** add these *repository*
    variables:
 
@@ -223,10 +297,11 @@ Open [repository settings](https://github.com/VicenteZambrano12/HistoricGuide/se
    If your GitHub plan/repository settings do not allow required reviewers,
    stop rather than merging without the intended approval gate.
 
-No additional GitHub variables or secrets are needed for the empty-secret
-stage. No Artifact Registry, Docker, Neon, application payload, or
-service-account JSON key secret is required. Allow a few minutes for new GCP
-IAM bindings to propagate before running the workflow.
+No additional GitHub variables or secrets are needed for image publication.
+The repository and image path come from Terraform. GitHub's hosted runner
+provides Docker; local Docker is not required to trigger the workflow. No
+application payload or service-account JSON key is passed into the build.
+Allow a few minutes for new IAM bindings to propagate.
 
 ## 3. Commit only this migration on `dev`
 
@@ -238,15 +313,14 @@ git add .github/workflows/terraform-deploy.yml \
   infra/README.md \
   infra/environments/prod/main.tf \
   infra/environments/prod/outputs.tf \
-  infra/modules/secrets/main.tf \
-  infra/modules/secrets/variables.tf \
-  infra/modules/secrets/outputs.tf \
-  scripts/check_infra_plan.py scripts/tests/test_check_infra_plan.py
-git add -u -- scripts/check_bucket_plan.py scripts/tests/test_check_bucket_plan.py
+  infra/modules/artifact_registry/main.tf \
+  infra/modules/artifact_registry/variables.tf \
+  scripts/check_infra_plan.py scripts/tests/test_check_infra_plan.py \
+  scripts/registry_images.py scripts/tests/test_registry_images.py README.md
 
 git diff --cached --stat
 git diff --cached --check
-git commit -m "infra: create empty global HistoricGuide secret" \
+git commit -m "infra: publish HistoricGuide images with two-image retention" \
   -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 git push -u origin dev
 ```
@@ -260,32 +334,37 @@ GitHub repository variables.
 
 1. Open **Pull requests → New pull request**: base `main`, compare `dev`.
 2. Review **Files changed**: the active root must contain only the storage
-   module, its retained import block, and the empty secret module. No active
-   Cloud Run, networking, registry, Qdrant, secret-version, or IAM resources
+   module, its retained import block, secret metadata, and the dedicated
+   Artifact Registry module. No active Cloud Run, networking, Qdrant,
+   secret-version, or IAM resources
    should appear.
 3. Merge the PR. This triggers the existing **closed + merged dev PR**
    workflow. Simply pushing `dev` will not run it.
 4. Open **Actions → Deploy GCP Infrastructure (Terraform)** and select the run.
-5. Open **Plan bucket and empty application secret → Show Terraform Plan**.
-   With the bucket already adopted, this stage must say **1 to add, 0 to
-   change, 0 to destroy**, creating only
-   `module.secrets.google_secret_manager_secret.app_secrets`. If the bucket
+5. Open **Plan infrastructure and image publication → Show Terraform Plan**.
+   With the bucket and secret already managed, this stage must say **1 to
+   import, 0 to add, 1 to change, 0 to destroy**, adopting only
+   `module.artifact_registry.google_artifact_registry_repository.default` and
+   adding its two cleanup policies. If the bucket
    has not yet been adopted, **1 to import** is also allowed. New metadata
-   outputs are expected. If both resources are already managed, a zero-change
+   outputs are expected. If all three resources are already managed, a zero-change
    plan is valid.
 6. Only after inspecting that plan, click **Review deployments → prod →
    Approve and deploy**. The apply job downloads and revalidates the saved
    plan; it never calculates a different plan for apply.
 7. Approve within the plan artifact's one-day retention period. If it expires,
    rerun all jobs to generate and review a fresh plan.
-8. Check **Terraform Apply** succeeds and reports the secret creation. The
-   workflow ends after applying the saved plan; it does not run a post-apply
-   bucket verification or a second drift plan.
+8. Check **Terraform Apply** succeeds and reports repository import/policy setup.
+   It then builds/pushes or reuses the image, resolves its digest, and enforces
+   two-image retention. No post-apply bucket verification or second drift plan
+   is added.
+9. Check **Record published image** and the job summary for the immutable
+   image reference. Verify the run succeeds before using that digest later.
 
-The expected result is the existing state tracking both resources, the existing
-bucket at the same URL with the same contents/IAM, and an empty global secret
-named `historicguide-secrets` with **zero versions**. There is no application
-deployment and no runtime secret access configured yet.
+The expected result is the existing state tracking three metadata resources,
+the bucket and JSON secret versions unchanged, and the application image in
+the dedicated repository. There is no Cloud Run deployment or runtime secret
+access configured yet.
 The import block can stay: later runs are idempotent and do not re-import a
 resource already in this state.
 
@@ -305,16 +384,25 @@ resource already in this state.
   runtime object read permission alone cannot import bucket metadata.
 - Secret creation denied: check the project-level custom create role in 1d.
   Secret refresh denied: check the conditioned metadata-read role separately.
+- Registry import denied or not found: check the administrator bootstrap in
+  1e and the repository-scoped custom role. Repository reads, policy updates,
+  Docker pushes, and retention all use this direct binding; do not replace it
+  with an unsupported project-level resource-name condition or broaden access.
+- A Docker build/push failure can happen after Terraform successfully imported
+  the repository. Fix the build error and rerun all jobs; the existing registry
+  is retained, and already-published SHA tags are reused.
 - Unexpected changes in the plan: **do not approve** or weaken the checker.
   Compare the live resource metadata to its module and fix the mismatch.
 - Do not use `terraform init -migrate-state`, copy example state, force-unlock
   an active run, run local apply, or use `-target` to bypass the restricted root.
 
-With Terraform 1.13.5 available, these checks do not access remote state:
+With Terraform 1.13.5 available, these checks do not apply infrastructure
+changes. A working directory already initialized against the GCS backend may
+still require authorized Application Default Credentials during initialization:
 
 ```sh
-terraform -chdir=infra/environments/prod fmt -check . ../../modules/storage ../../modules/secrets
+terraform -chdir=infra/environments/prod fmt -check . ../../modules/storage ../../modules/secrets ../../modules/artifact_registry
 terraform -chdir=infra/environments/prod init -backend=false -input=false -lockfile=readonly
 terraform -chdir=infra/environments/prod validate
-uv run --project backend --locked python -m unittest scripts.tests.test_check_infra_plan
+uv run --project backend --locked python -m unittest scripts.tests.test_check_infra_plan scripts.tests.test_registry_images
 ```
