@@ -1,0 +1,107 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,400;1,600&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
+:root {
+  color-scheme: dark;
+  --bg-obsidian: #0b0a09;
+  --bg-panel: #141210;
+  --bg-card: #1c1916;
+  --bg-card-hover: #25211d;
+  --bg-glass: rgba(20, 18, 16, 0.86);
+
+  --gold-primary: #d4af37;
+  --gold-soft: rgba(212, 175, 55, 0.16);
+  --gold-border: rgba(212, 175, 55, 0.32);
+
+  --crimson-imperial: #9e2a2b;
+  --crimson-soft: rgba(158, 42, 43, 0.2);
+
+  --emerald-rag: #10b981;
+  --emerald-soft: rgba(16, 185, 129, 0.15);
+
+  --amber-gastro: #f59e0b;
+  --amber-soft: rgba(245, 158, 11, 0.15);
+
+  --cyan-gps: #38bdf8;
+
+  --text-marble: #f5f2eb;
+  --text-travertine: #c8c1b4;
+  --text-muted: #8a8275;
+
+  --border-subtle: rgba(245, 242, 235, 0.09);
+
+  --font-display: 'Cinzel', serif;
+  --font-editorial: 'Cormorant Garamond', serif;
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --shadow-elevated: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --text-success: #6ee7b7;
+  --text-crimson: #fca5a5;
+  --bg-code: #090807;
+  --scrollbar-thumb: #2f2a24;
+  --map-header: rgba(15, 13, 11, 0.9);
+  --map-background: radial-gradient(circle at 50% 50%, #1a1713 0%, #0d0b09 100%);
+  --map-hud: rgba(16, 14, 12, 0.92);
+  --map-label: rgba(14, 12, 10, 0.9);
+  --map-pin: #171411;
+  --map-pin-visited: #2b251c;
+  --map-grid: rgba(212, 175, 55, 0.06);
+  --map-contour: rgba(212, 175, 55, 0.12);
+  --map-terrain: rgba(212, 175, 55, 0.03);
+  --map-terrain-label: rgba(212, 175, 55, 0.28);
+  --map-route: rgba(212, 175, 55, 0.45);
+  --map-river: rgba(56, 189, 248, 0.18);
+  --map-river-line: rgba(56, 189, 248, 0.45);
+  --map-river-label: rgba(56, 189, 248, 0.5);
+  --art-background: linear-gradient(180deg, #1b1610 0%, #0e0c0a 100%);
+  --art-overlay: linear-gradient(180deg, rgba(11, 10, 9, 0.1) 0%, rgba(11, 10, 9, 0.85) 100%);
+  --on-gold: #0b0a09;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg-obsidian: #f6f2e9;
+  --bg-panel: #fffdf8;
+  --bg-card: #f0e9dc;
+  --bg-card-hover: #e7ddcc;
+  --bg-glass: rgba(255, 253, 248, 0.94);
+  --gold-primary: #806015;
+  --gold-soft: rgba(128, 96, 21, 0.12);
+  --gold-border: rgba(128, 96, 21, 0.32);
+  --crimson-imperial: #9e2a2b;
+  --crimson-soft: rgba(158, 42, 43, 0.09);
+  --emerald-rag: #08734f;
+  --emerald-soft: rgba(8, 115, 79, 0.1);
+  --amber-gastro: #925108;
+  --amber-soft: rgba(146, 81, 8, 0.1);
+  --cyan-gps: #086a92;
+  --text-marble: #29241d;
+  --text-travertine: #51483c;
+  --text-muted: #6e6253;
+  --border-subtle: rgba(62, 48, 29, 0.18);
+  --shadow-elevated: 0 12px 32px rgba(62, 48, 29, 0.12);
+  --text-success: #086443;
+  --text-crimson: #9e2a2b;
+  --bg-code: #f5efdf;
+  --scrollbar-thumb: #b2a48e;
+  --map-header: rgba(250, 245, 234, 0.95);
+  --map-background: radial-gradient(circle at 50% 50%, #fffaf0 0%, #eae0cc 100%);
+  --map-hud: rgba(255, 253, 248, 0.95);
+  --map-label: rgba(255, 253, 248, 0.96);
+  --map-pin: #fffdf8;
+  --map-pin-visited: #e7ddcc;
+  --map-grid: rgba(128, 96, 21, 0.12);
+  --map-contour: rgba(128, 96, 21, 0.25);
+  --map-terrain: rgba(128, 96, 21, 0.05);
+  --map-terrain-label: #806015;
+  --map-route: rgba(128, 96, 21, 0.65);
+  --map-river: rgba(8, 106, 146, 0.16);
+  --map-river-line: rgba(8, 106, 146, 0.55);
+  --map-river-label: #086a92;
+  --art-background: linear-gradient(180deg, #eadcc0 0%, #f9f3e7 100%);
+  --art-overlay: linear-gradient(180deg, rgba(249, 243, 231, 0.1) 0%, rgba(249, 243, 231, 0.95) 100%);
+  --on-gold: #fffdf8;
+}

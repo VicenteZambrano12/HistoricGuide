@@ -1,0 +1,77 @@
+.rag-drawer {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.rag-drawer__tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.rag-drawer__tab {
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  border-bottom: 2px solid var(--gold-primary);
+  background: transparent;
+  color: var(--gold-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rag-drawer__tab:focus-visible,
+.rag-drawer__source:focus-visible,
+.rag-drawer__panel:focus-visible {
+  outline: 2px solid var(--gold-primary);
+  outline-offset: 3px;
+}
+
+.rag-drawer__panel {
+  min-height: 4rem;
+}
+
+.rag-drawer__sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.rag-drawer__source {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  color: var(--gold-primary);
+  text-decoration: none;
+}
+
+.rag-drawer__source:hover {
+  border-color: var(--gold-primary);
+  text-decoration: underline;
+}
+
+.rag-drawer__filename {
+  overflow-wrap: anywhere;
+}
+
+.rag-drawer__page {
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+
+.rag-drawer__empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}

@@ -1,0 +1,147 @@
+name: Deploy GCP Infrastructure (Terraform)
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+env:
+  TF_WORKING_DIR: infra/environments/prod
+  TF_IN_AUTOMATION: "true"
+  TF_VERSION: "1.13.5"
+  TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+  TF_VAR_region: ${{ vars.GCP_REGION }}
+
+concurrency:
+  group: terraform-prod
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-and-plan:
+    name: Plan existing bucket import
+    if: github.event.pull_request.merged == true && github.head_ref == 'dev' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check configuration
+        env:
+          WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          TERRAFORM_SA: ${{ secrets.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+        run: |
+          if [[ "$TF_VAR_project_id" != "basicrahgapp" || "$TF_VAR_region" != "europe-southwest1" ]]; then
+            echo "::error::Set GCP_PROJECT_ID=basicrahgapp and GCP_REGION=europe-southwest1."
+            exit 1
+          fi
+          if [[ -z "$WIF_PROVIDER" || "$TERRAFORM_SA" != "historicguide@basicrahgapp.iam.gserviceaccount.com" ]]; then
+            echo "::error::Configure the WIF provider and the historicguide Terraform service account secrets."
+            exit 1
+          fi
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check . ../../modules/storage
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -input=false -lockfile=readonly
+
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      - name: Verify default workspace
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: test "$(terraform workspace show)" = "default"
+
+      - name: Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform plan -input=false -lock-timeout=60s -out=tfplan
+
+      - name: Verify import-only plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform show -json tfplan | python3 "$GITHUB_WORKSPACE/scripts/check_bucket_plan.py"
+
+      - name: Show Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform show -no-color tfplan
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
+          retention-days: 1
+          if-no-files-found: error
+
+  apply:
+    needs: build-and-plan
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -input=false -lockfile=readonly
+
+      - name: Verify import-only plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform show -json tfplan | python3 "$GITHUB_WORKSPACE/scripts/check_bucket_plan.py"
+
+      - name: Terraform Apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -input=false -lock-timeout=60s tfplan
+
+      - name: Verify imported bucket and zero drift
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          test "$(terraform state list)" = "module.storage.google_storage_bucket.app_data"
+          test "$(terraform output -raw bucket_name)" = "historic-guide"
+          terraform plan -input=false -lock-timeout=60s -detailed-exitcode

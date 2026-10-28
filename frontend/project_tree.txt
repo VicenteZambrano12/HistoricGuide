@@ -1,4 +1,5 @@
 .
+├── .env
 ├── .gitignore
 ├── README.md
 ├── eslint.config.js
@@ -16,8 +17,19 @@
 │   │   ├── hero.png
 │   │   ├── react.svg
 │   │   └── vite.svg
+│   ├── components
+│   ├── features
+│   ├── hooks
+│   ├── i18n
 │   ├── index.css
-│   └── main.jsx
+│   ├── layouts
+│   ├── lib
+│   ├── main.jsx
+│   ├── pages
+│   ├── router
+│   ├── store
+│   ├── theme.css
+│   └── utils
 └── vite.config.js
 
-4 directories, 17 files
+14 directories, 19 files
