@@ -1,9 +1,15 @@
-# First migration: adopt the existing HistoricGuide bucket
+# HistoricGuide Terraform migration
 
-This stage manages **only** the existing `gs://historic-guide` bucket in
-`basicrahgapp`, region `europe-southwest1`. It does not copy objects, change IAM,
-deploy the application, create Qdrant resources, or manage the other example
-modules. Those modules remain inactive until a later migration step.
+The first stage adopted the existing `gs://historic-guide` bucket in
+`basicrahgapp`, region `europe-southwest1`. The current stage keeps that bucket
+unchanged and creates **one empty global Secret Manager secret**,
+`historicguide-secrets`, with automatic replication.
+
+The secret is reserved for a future single JSON object containing application
+configuration. This stage creates **no secret version, JSON payload, or runtime
+accessor IAM binding**. It does not read `.env`, copy objects, deploy the
+application, create Qdrant resources, or activate the other example modules.
+The existing example secrets for other applications are not imported or changed.
 
 The existing workflow, [terraform-deploy.yml](../.github/workflows/terraform-deploy.yml),
 keeps its original sequence: merge a same-repository `dev` PR into `main`,
@@ -25,24 +31,32 @@ or a manual Actions dispatch.
 - No new labels are added. Terraform attribution labels are disabled so that
   adoption does not require updating the bucket.
 - `prevent_destroy = true` and `force_destroy = false` protect the bucket.
-- The [plan checker](../scripts/check_bucket_plan.py) allows exactly this
-  resource, with only `no-op` actions and an optional import of `historic-guide`.
-  It rejects creation, updates, deletion, replacement, extra resources, moves,
-  incomplete plans, and deferred changes before upload and again before apply.
+- The [plan checker](../scripts/check_infra_plan.py) allows exactly the bucket
+  and `module.secrets.google_secret_manager_secret.app_secrets`. The bucket
+  must remain unchanged, with an optional import of `historic-guide`. The
+  global `historicguide-secrets` secret may be created or remain unchanged;
+  updates, deletion, replacement, imports of other secrets, extra resources,
+  moves, incomplete plans, and deferred changes are rejected before upload and
+  again before apply. Secret-version and IAM resources are not allowed.
+- The secret also uses `prevent_destroy = true`. Only its metadata enters
+  Terraform state; there is no secret value in configuration, plans, or state.
 - Bucket objects and bucket IAM are deliberately outside Terraform in this
   step. Existing runtime access and all PDFs/prompts remain unchanged.
 - The backend bucket itself is pre-existing bootstrap infrastructure; this
-  configuration does not import it. State writes/locks are the only expected
-  cloud writes.
+  configuration does not import it. The expected cloud writes are state/locks
+  and creation of the empty application secret.
 
 ## 1. One-time GCP bootstrap (manual)
 
-Run these commands yourself with an administrator identity authorized to create
-WIF providers/custom roles and add IAM bindings. They are **not** workflow steps:
+The initial bucket bootstrap is already configured for this repository. The
+commands below document that setup; do not recreate verified existing resources.
+For the secrets stage, the additional permissions are documented in **1d**.
+Use an administrator identity authorized to create WIF providers/custom roles
+and add IAM bindings. These are **not** workflow steps:
 GitHub needs these permissions before Terraform can authenticate or store state.
 No JSON service-account key is used by GitHub.
 
-The specified account is reused for this first step:
+The specified account is reused for this migration:
 `historicguide@basicrahgapp.iam.gserviceaccount.com`. These grants add state
 access to its existing runtime PDF/prompt access. A separate deployment account
 can be considered later, but is not introduced here.
@@ -124,8 +138,54 @@ gcloud storage buckets add-iam-policy-binding gs://terraform_bucket_portfolio \
 
 Listing exposes object names in the shared backend bucket, not other projects'
 state contents. Reading/writing/deleting state objects is limited to the new
-prefix. No project-level role or permission to mutate the corpus bucket is
-needed. If a custom role already exists, inspect its permissions before reuse.
+prefix. State access needs no project-level role or permission to mutate the
+corpus bucket. If a custom role already exists, inspect its permissions before
+reuse.
+
+### 1d. Create the empty secret through Terraform, not the CLI
+
+The Secret Manager API must already be enabled. The deployment account needs
+`secretmanager.secrets.create` on the project because the new secret does not
+exist yet. Metadata reads are conditioned to the single application secret.
+These roles grant no payload reads, version creation, secret updates/deletion,
+or IAM-policy changes:
+
+```sh
+gcloud iam roles create historicGuideSecretCreate \
+  --project=basicrahgapp \
+  --title="HistoricGuide empty secret creation" \
+  --description="Create Secret Manager containers; no version or payload permissions" \
+  --permissions=secretmanager.secrets.create \
+  --stage=GA
+
+gcloud iam roles create historicGuideSecretMetadata \
+  --project=basicrahgapp \
+  --title="HistoricGuide secret metadata read" \
+  --description="Read Secret Manager container metadata only" \
+  --permissions=secretmanager.secrets.get \
+  --stage=GA
+
+gcloud projects add-iam-policy-binding basicrahgapp \
+  --member="serviceAccount:historicguide@basicrahgapp.iam.gserviceaccount.com" \
+  --role="projects/basicrahgapp/roles/historicGuideSecretCreate" \
+  --condition=None
+
+gcloud projects add-iam-policy-binding basicrahgapp \
+  --member="serviceAccount:historicguide@basicrahgapp.iam.gserviceaccount.com" \
+  --role="projects/basicrahgapp/roles/historicGuideSecretMetadata" \
+  --condition="title=historicguide-secret-metadata,expression=resource.name.endsWith('/secrets/historicguide-secrets')"
+```
+
+The create permission is necessarily project-scoped; the workflow plan checker
+limits this migration to the named secret. Do not grant Secret Manager Admin
+or Secret Accessor for this step. If a newly created custom role is temporarily
+reported as missing, allow IAM propagation and retry only the failed binding.
+Do not run `gcloud secrets create`: creation belongs to the reviewed Terraform
+plan and apply.
+
+Later, upload one JSON payload as a secret version through an explicitly
+authorized secret-value workflow and wire runtime access separately. Do not
+put real values in Terraform variables, source files, commits, or plan artifacts.
 
 ## 2. Configure GitHub before merging
 
@@ -152,15 +212,20 @@ Open [repository settings](https://github.com/VicenteZambrano12/HistoricGuide/se
 4. **Environments → New environment:** create `prod`. Under deployment
    protection rules, enable **Required reviewers** and select yourself or an
    authorized reviewer. For a solo repository, leave **Prevent self-review**
-   disabled if you will approve your own run. Restrict deployment branches to
-   **Selected branches and tags → branch `main`**.
+   disabled if you will approve your own run. Under **Selected branches and
+   tags**, add two **Branch** rules: `main` and `refs/pull/*/merge`. GitHub can
+   evaluate a pull-request deployment against its synthetic merge ref, even
+   for this merged-PR workflow. Keeping only `main` can reject the apply job
+   before it starts. Keep required reviewers enabled; the workflow also
+   requires a merged, same-repository `dev` PR targeting `main`.
 5. Save and verify the reviewer rule **before merging**. `environment: prod`
    alone does not require approval; without the rule, apply runs automatically.
    If your GitHub plan/repository settings do not allow required reviewers,
    stop rather than merging without the intended approval gate.
 
-No Artifact Registry, Docker, Neon, application secrets, or service-account
-JSON key secret is required for this stage. Allow a few minutes for new GCP
+No additional GitHub variables or secrets are needed for the empty-secret
+stage. No Artifact Registry, Docker, Neon, application payload, or
+service-account JSON key secret is required. Allow a few minutes for new GCP
 IAM bindings to propagate before running the workflow.
 
 ## 3. Commit only this migration on `dev`
@@ -169,21 +234,19 @@ There are other uncommitted application changes. Do not use `git add .`.
 Review the listed paths, then stage only:
 
 ```sh
-git add .github/workflows/terraform-deploy.yml .gitignore \
+git add .github/workflows/terraform-deploy.yml \
   infra/README.md \
   infra/environments/prod/main.tf \
-  infra/environments/prod/backend.tf \
-  infra/environments/prod/variables.tf \
   infra/environments/prod/outputs.tf \
-  infra/environments/prod/.terraform.lock.hcl \
-  infra/modules/storage/main.tf \
-  infra/modules/storage/variables.tf \
-  infra/modules/storage/outputs.tf \
-  scripts/check_bucket_plan.py scripts/tests/test_check_bucket_plan.py
+  infra/modules/secrets/main.tf \
+  infra/modules/secrets/variables.tf \
+  infra/modules/secrets/outputs.tf \
+  scripts/check_infra_plan.py scripts/tests/test_check_infra_plan.py
+git add -u -- scripts/check_bucket_plan.py scripts/tests/test_check_bucket_plan.py
 
 git diff --cached --stat
 git diff --cached --check
-git commit -m "infra: adopt existing HistoricGuide bucket through Terraform" \
+git commit -m "infra: create empty global HistoricGuide secret" \
   -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 git push -u origin dev
 ```
@@ -197,33 +260,41 @@ GitHub repository variables.
 
 1. Open **Pull requests → New pull request**: base `main`, compare `dev`.
 2. Review **Files changed**: the active root must contain only the storage
-   module and its import. No active Cloud Run, networking, registry, secrets,
-   Qdrant, or IAM resources should appear.
-3. Merge the PR. This publishes the workflow to `main` for the first time and
-   triggers the existing **closed + merged dev PR** workflow. Simply pushing
-   `dev` will not run it.
+   module, its retained import block, and the empty secret module. No active
+   Cloud Run, networking, registry, Qdrant, secret-version, or IAM resources
+   should appear.
+3. Merge the PR. This triggers the existing **closed + merged dev PR**
+   workflow. Simply pushing `dev` will not run it.
 4. Open **Actions → Deploy GCP Infrastructure (Terraform)** and select the run.
-5. Open **Plan existing bucket import → Show Terraform Plan**. The first run
-   must say **1 to import, 0 to add, 0 to change, 0 to destroy**, for
-   `module.storage.google_storage_bucket.app_data`. New output values are
-   expected. If the bucket was already adopted by this workflow, a zero-change
-   plan without an import is also valid.
+5. Open **Plan bucket and empty application secret → Show Terraform Plan**.
+   With the bucket already adopted, this stage must say **1 to add, 0 to
+   change, 0 to destroy**, creating only
+   `module.secrets.google_secret_manager_secret.app_secrets`. If the bucket
+   has not yet been adopted, **1 to import** is also allowed. New metadata
+   outputs are expected. If both resources are already managed, a zero-change
+   plan is valid.
 6. Only after inspecting that plan, click **Review deployments → prod →
    Approve and deploy**. The apply job downloads and revalidates the saved
    plan; it never calculates a different plan for apply.
 7. Approve within the plan artifact's one-day retention period. If it expires,
    rerun all jobs to generate and review a fresh plan.
-8. Check **Verify imported bucket and zero drift** succeeds. It requires the
-   state to contain exactly the bucket, checks its name, and requires a
-   follow-up plan with no changes.
+8. Check **Terraform Apply** succeeds and reports the secret creation. The
+   workflow ends after applying the saved plan; it does not run a post-apply
+   bucket verification or a second drift plan.
 
-The expected result is a state object at the new backend prefix, the existing
-bucket at the same URL with the same contents/IAM, and no application deployment.
+The expected result is the existing state tracking both resources, the existing
+bucket at the same URL with the same contents/IAM, and an empty global secret
+named `historicguide-secrets` with **zero versions**. There is no application
+deployment and no runtime secret access configured yet.
 The import block can stay: later runs are idempotent and do not re-import a
 resource already in this state.
 
 ## Troubleshooting and local checks
 
+- `refs/pull/<number>/merge` is not allowed to deploy: add the **Branch** rule
+  `refs/pull/*/merge` to `prod` alongside `main`, leaving required reviewers
+  enabled. Rerun all jobs to generate a fresh plan, then review and approve it.
+  Do not disable environment protection or change the workflow trigger.
 - `attribute condition` / federation denied: check the new provider path,
   repository IDs, and that this is a merged same-repository `dev` → `main` PR.
 - `iam.serviceAccounts.getAccessToken` denied: check the repository-scoped
@@ -232,18 +303,18 @@ resource already in this state.
   State read/write/lock denied: check the object-prefix condition separately.
 - Bucket metadata denied: check `storage.buckets.get` on `historic-guide`;
   runtime object read permission alone cannot import bucket metadata.
+- Secret creation denied: check the project-level custom create role in 1d.
+  Secret refresh denied: check the conditioned metadata-read role separately.
 - Unexpected changes in the plan: **do not approve** or weaken the checker.
-  Compare the live bucket settings to the storage module and fix the mismatch.
-- A failed post-apply check may mean the import succeeded but verification did
-  not. Inspect the run before retrying; do not delete the bucket or the state.
+  Compare the live resource metadata to its module and fix the mismatch.
 - Do not use `terraform init -migrate-state`, copy example state, force-unlock
-  an active run, run local apply, or use `-target` to bypass the bucket-only root.
+  an active run, run local apply, or use `-target` to bypass the restricted root.
 
 With Terraform 1.13.5 available, these checks do not access remote state:
 
 ```sh
-terraform -chdir=infra/environments/prod fmt -check . ../../modules/storage
+terraform -chdir=infra/environments/prod fmt -check . ../../modules/storage ../../modules/secrets
 terraform -chdir=infra/environments/prod init -backend=false -input=false -lockfile=readonly
 terraform -chdir=infra/environments/prod validate
-uv run --project backend --locked python -m unittest scripts.tests.test_check_bucket_plan
+uv run --project backend --locked python -m unittest scripts.tests.test_check_infra_plan
 ```

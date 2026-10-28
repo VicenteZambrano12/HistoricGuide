@@ -1,14 +1,3 @@
-# vicentezambrano12.github.io
-
-## Local credentials
-
-Copy `.env.sample` to `.env` and set your credentials locally. Never commit
-`.env` or service-account JSON keys; ignore rules do not untrack files that
-were already committed. Keep `.env.sample` limited to safe placeholders.
-
-If GitHub blocks a push containing a credential, revoke or rotate it and
-remove it from every affected unpublished commit before retrying. Deleting it
-only in the latest commit does not remove it from earlier commits.
 
 ## Generate the PDF corpus
 
@@ -203,6 +192,50 @@ uv run --with 'google-cloud-storage>=3,<4' --with 'google-crc32c>=1.5,<2' \
 ```
 
 ## Backend API
+
+### Cloud Run container
+
+The root `Dockerfile` builds one image containing the React/Vite frontend and
+FastAPI backend, using `frontend/package-lock.json` and `backend/uv.lock`.
+It serves the frontend at `/`, API endpoints at `/api`, health at `/api/health`,
+and API documentation at `/api/docs`. The existing local backend entry point
+and its unprefixed routes are unchanged.
+
+Build from the repository root on a machine with Docker:
+
+```sh
+docker build --platform linux/amd64 -t historicguide:local .
+```
+
+The container defaults to `ENV=GCP`, listens on `0.0.0.0:${PORT:-8080}`, and
+runs one Uvicorn worker as a non-root user. Supply `GEMINI_API_KEY`,
+`GOOGLE_CLOUD_PROJECT`, `GCS_BUCKET`, `QDRANT_HOST`/`QDRANT_PORT` (or
+`QDRANT_URL`), and any required `QDRANT_API_KEY` through runtime configuration.
+Keep the embedding model consistent with the migrated collection.
+On Cloud Run, attach the runtime service account and use Application Default
+Credentials; do not set `GOOGLE_APPLICATION_CREDENTIALS` to a laptop path.
+
+The Docker build context excludes local `.env` files, service-account keys,
+Terraform files, local databases, dependency directories, and other files
+outside the application build inputs. No secrets are passed as build arguments.
+The image does not include the local PDF corpus or SQLite snapshot.
+Building the image does not push it, deploy Cloud Run, or change Terraform.
+
+Without Docker, validate the built frontend and combined application locally:
+
+```sh
+npm --prefix frontend run build
+ENV=LOCAL PYTHONPATH=backend uv run --project backend --locked \
+  python -m unittest backend.tests.test_container backend.tests.test_health \
+  backend.tests.test_documents
+uv run --project backend --locked uvicorn src.container:create_app \
+  --factory --app-dir backend --host 127.0.0.1 --port 8080 --no-access-log
+```
+
+The local combined server also serves `/api/health`; it needs the frontend
+build from the preceding command. Real chat requests still require the data
+source configuration described below. Cloud Run deployment and image
+publication remain separate migration steps.
 
 ### Local or GCP data sources
 
