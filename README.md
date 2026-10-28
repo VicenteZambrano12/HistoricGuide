@@ -1,5 +1,15 @@
 # vicentezambrano12.github.io
 
+## Local credentials
+
+Copy `.env.sample` to `.env` and set your credentials locally. Never commit
+`.env` or service-account JSON keys; ignore rules do not untrack files that
+were already committed. Keep `.env.sample` limited to safe placeholders.
+
+If GitHub blocks a push containing a credential, revoke or rotate it and
+remove it from every affected unpublished commit before retrying. Deleting it
+only in the latest commit does not remove it from earlier commits.
+
 ## Generate the PDF corpus
 
 From the repository root, install the PDF generator's dependencies with
