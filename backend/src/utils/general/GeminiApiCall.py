@@ -17,10 +17,28 @@ from dotenv import dotenv_values
 ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
 
 
+def _json_configuration() -> dict[str, str]:
+    raw = os.environ.get("APP_SECRETS_JSON")
+    if raw is None:
+        return {}
+    try:
+        configuration = json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError("APP_SECRETS_JSON must contain a valid JSON object.") from None
+    if not isinstance(configuration, dict) or not configuration or any(
+        not isinstance(value, str) for value in configuration.values()
+    ):
+        raise ValueError("APP_SECRETS_JSON must be a nonempty object of string values.")
+    return configuration
+
+
 def _configuration_value(name: str, default: str = "") -> str:
     value = os.environ.get(name)
     if value is not None:
         return value
+    configuration = _json_configuration()
+    if name in configuration:
+        return configuration[name]
     if not ENV_FILE.exists():
         return default
     with ENV_FILE.open(encoding="utf-8") as stream:

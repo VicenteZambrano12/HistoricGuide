@@ -1,4 +1,5 @@
 import { useTour } from '../../store/TourContext';
+import { ChatIcon } from '../ChatIcon/ChatIcon';
 import './Navbar.css';
 
 export function Navbar({ theme, onToggleTheme }) {
@@ -36,15 +37,14 @@ export function Navbar({ theme, onToggleTheme }) {
           title={t('languageToggle')}
           onClick={toggleLanguage}
         >
-          <span lang="en">EN</span>
+          <span lang="en" className={language === 'en' ? 'navbar__language--selected' : ''}>EN</span>
           <span aria-hidden="true">/</span>
-          <span lang="es">ES</span>
-          <span aria-hidden="true">({language.toUpperCase()})</span>
+          <span lang="es" className={language === 'es' ? 'navbar__language--selected' : ''}>ES</span>
         </button>
         <button
           type="button"
           className="navbar__btn"
-          aria-label={t('lightMode')}
+          aria-label={t(theme === 'dark' ? 'switchToLight' : 'switchToDark')}
           aria-pressed={theme === 'light'}
           title={t(theme === 'dark' ? 'switchToLight' : 'switchToDark')}
           onClick={onToggleTheme}
@@ -60,6 +60,7 @@ export function Navbar({ theme, onToggleTheme }) {
           aria-pressed={audioEnabled}
           disabled={isChatPending || isWalking || isVoiceRecording}
         >
+          <ChatIcon name={audioEnabled ? 'volume' : 'muted'} />
           {t(audioEnabled ? 'voiceOn' : 'voiceOff')}
         </button>
 

@@ -214,6 +214,10 @@ runs one Uvicorn worker as a non-root user. Supply `GEMINI_API_KEY`,
 Keep the embedding model consistent with the migrated collection.
 On Cloud Run, attach the runtime service account and use Application Default
 Credentials; do not set `GOOGLE_APPLICATION_CREDENTIALS` to a laptop path.
+The service receives the single `historicguide-secrets` JSON object through
+`APP_SECRETS_JSON`. Configuration precedence is process environment, JSON secret,
+root `.env`, then defaults. JSON values must be strings; malformed JSON fails
+container startup without printing its payload.
 
 The Docker build context excludes local `.env` files, service-account keys,
 Terraform files, local databases, dependency directories, and other files
@@ -234,10 +238,12 @@ uv run --project backend --locked uvicorn src.container:create_app \
 
 The local combined server also serves `/api/health`; it needs the frontend
 build from the preceding command. Real chat requests still require the data
-source configuration described below. Image publication is now prepared in
-the existing Terraform workflow; see the
-[Artifact Registry workflow guide](infra/README.md). Cloud Run deployment
-remains a separate migration step.
+source configuration described below. The existing Terraform workflow now
+publishes/resolves an immutable image digest before planning the public
+`historicguide-backend` service. Deployment still requires reviewing and approving
+the saved plan in `prod`; see the [Cloud Run migration guide](infra/README.md).
+The service reuses the private Qdrant network, but does not start the VM or
+migrate its collection. Healthy HTTP endpoints do not establish chat readiness.
 
 ### Local or GCP data sources
 

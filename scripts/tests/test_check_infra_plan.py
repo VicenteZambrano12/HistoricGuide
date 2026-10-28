@@ -9,9 +9,11 @@ from scripts.check_infra_plan import check_plan
 
 class InfrastructurePlanTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.image = "europe-southwest1-docker.pkg.dev/basicrahgapp/historicguide-repo/historicguide@sha256:" + "a" * 64
         self.plan = {
             "complete": True,
             "errored": False,
+            "variables": {"app_container_image": {"value": self.image}},
             "resource_changes": [{
                 "address": "module.storage.google_storage_bucket.app_data",
                 "mode": "managed",
@@ -63,6 +65,60 @@ class InfrastructurePlanTests(unittest.TestCase):
         registry["before"] = copy.deepcopy(registry["after"])
         registry["before"]["cleanup_policies"] = []
         registry["before"]["cleanup_policy_dry_run"] = True
+        self.plan["resource_changes"].extend([{
+            "address": "module.cloudrun.google_cloud_run_v2_service.backend",
+            "mode": "managed", "type": "google_cloud_run_v2_service",
+            "change": {
+                "actions": ["create"],
+                "after": {
+                    "project": "basicrahgapp", "location": "europe-southwest1",
+                    "name": "historicguide-backend", "ingress": "INGRESS_TRAFFIC_ALL",
+                    "deletion_protection": False,
+                    "traffic": [{"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}],
+                    "template": [{
+                        "service_account": "historicguide@basicrahgapp.iam.gserviceaccount.com",
+                        "scaling": [{"min_instance_count": 1, "max_instance_count": 1}],
+                        "vpc_access": [{
+                            "egress": "PRIVATE_RANGES_ONLY",
+                            "network_interfaces": [{
+                                "subnetwork": "projects/basicrahgapp/regions/europe-southwest1/subnetworks/serverless-egress-subnet",
+                            }],
+                        }],
+                        "containers": [{
+                            "image": self.image,
+                            "ports": [{"container_port": 8080}],
+                            "resources": [{"limits": {"cpu": "2", "memory": "2Gi"}}],
+                            "startup_probe": [{"http_get": [{
+                                "path": "/api/health", "port": 8080, "http_headers": [],
+                            }]}],
+                            "env": [
+                                {"name": name, "value": value} for name, value in {
+                                    "ENV": "GCP", "QDRANT_HOST": "10.0.1.2", "QDRANT_PORT": "6333",
+                                    "GOOGLE_CLOUD_PROJECT": "basicrahgapp",
+                                    "GOOGLE_CLOUD_LOCATION": "europe-southwest1",
+                                }.items()
+                            ] + [{
+                                "name": "APP_SECRETS_JSON",
+                                "value_source": [{"secret_key_ref": [{
+                                    "secret": "historicguide-secrets", "version": "latest",
+                                }]}],
+                            }],
+                        }],
+                    }],
+                },
+            },
+        }, {
+            "address": "module.cloudrun.google_cloud_run_service_iam_member.public_access",
+            "mode": "managed", "type": "google_cloud_run_service_iam_member",
+            "change": {
+                "actions": ["create"],
+                "after": {
+                    "project": "basicrahgapp", "location": "europe-southwest1",
+                    "service": "historicguide-backend",
+                    "role": "roles/run.invoker", "member": "allUsers",
+                },
+            },
+        }])
 
     def test_import_and_metadata_creation_are_allowed(self) -> None:
         check_plan(self.plan)
@@ -218,6 +274,90 @@ class InfrastructurePlanTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, "")
         self.assertIn("::error::", result.stderr)
+
+    def test_cloud_run_in_place_image_update_is_allowed(self) -> None:
+        self.plan["resource_changes"][3]["change"]["actions"] = ["update"]
+        check_plan(self.plan)
+
+    def test_cloud_run_wrong_identity_and_destructive_actions_are_rejected(self) -> None:
+        for fields in (
+            {"project": "other-project"}, {"name": "basicragapp-backend"},
+            {"location": "us-central1"}, {"ingress": "INGRESS_TRAFFIC_INTERNAL_ONLY"},
+        ):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                plan = copy.deepcopy(self.plan)
+                plan["resource_changes"][3]["change"]["after"].update(fields)
+                check_plan(plan)
+        for actions in (["delete"], ["delete", "create"], ["read"]):
+            with self.subTest(actions=actions), self.assertRaises(ValueError):
+                plan = copy.deepcopy(self.plan)
+                plan["resource_changes"][3]["change"]["actions"] = actions
+                check_plan(plan)
+
+    def test_image_must_be_digest_pinned_in_our_package_and_match_plan_input(self) -> None:
+        for image in (
+            self.image.split("@")[0] + ":latest", self.image.replace("historicguide-repo", "portfolio-repo"),
+            self.image[:-1], self.image.replace("sha256:", "sha256:Z"),
+        ):
+            with self.subTest(image=image), self.assertRaises(ValueError):
+                plan = copy.deepcopy(self.plan)
+                plan["variables"]["app_container_image"]["value"] = image
+                plan["resource_changes"][3]["change"]["after"]["template"][0]["containers"][0]["image"] = image
+                check_plan(plan)
+        self.plan["resource_changes"][3]["change"]["after"]["template"][0]["containers"][0]["image"] = self.image[:-1] + "b"
+        with self.assertRaises(ValueError):
+            check_plan(self.plan)
+
+    def test_wrong_runtime_identity_scaling_and_network_are_rejected(self) -> None:
+        for fields in (
+            {"service_account": "other@basicrahgapp.iam.gserviceaccount.com"},
+            {"scaling": [{"min_instance_count": 0, "max_instance_count": 10}]},
+            {"vpc_access": [{"egress": "ALL_TRAFFIC", "network_interfaces": []}]},
+            {"vpc_access": [{"egress": "PRIVATE_RANGES_ONLY", "network_interfaces": [{"subnetwork": "qdrant-subnet"}]}]},
+            {"volumes": [{"name": "unexpected"}]},
+        ):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                plan = copy.deepcopy(self.plan)
+                plan["resource_changes"][3]["change"]["after"]["template"][0].update(fields)
+                check_plan(plan)
+
+    def test_wrong_secret_plaintext_payload_and_extra_env_are_rejected(self) -> None:
+        for replacement in (
+            {"name": "APP_SECRETS_JSON", "value": "never-in-terraform"},
+            {"name": "APP_SECRETS_JSON", "value_source": [{"secret_key_ref": [{"secret": "other-app", "version": "latest"}]}]},
+        ):
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                plan = copy.deepcopy(self.plan)
+                plan["resource_changes"][3]["change"]["after"]["template"][0]["containers"][0]["env"][-1] = replacement
+                check_plan(plan)
+        plan = copy.deepcopy(self.plan)
+        plan["resource_changes"][3]["change"]["after"]["template"][0]["containers"][0]["env"].append(
+            {"name": "GEMINI_API_KEY", "value": "never-in-terraform"},
+        )
+        with self.assertRaises(ValueError):
+            check_plan(plan)
+
+    def test_wrong_container_resources_port_probe_and_entrypoint_are_rejected(self) -> None:
+        for fields in (
+            {"ports": [{"container_port": 9000}]},
+            {"resources": [{"limits": {"cpu": "8", "memory": "8Gi"}}]},
+            {"startup_probe": [{"http_get": [{"path": "/", "port": 8080, "http_headers": []}]}]},
+            {"command": ["custom-command"]},
+        ):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                plan = copy.deepcopy(self.plan)
+                plan["resource_changes"][3]["change"]["after"]["template"][0]["containers"][0].update(fields)
+                check_plan(plan)
+
+    def test_public_invoker_cannot_target_another_service_role_or_member(self) -> None:
+        for fields in (
+            {"service": "portfolio"}, {"project": "other-project"},
+            {"role": "roles/run.admin"}, {"member": "allAuthenticatedUsers"},
+        ):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                plan = copy.deepcopy(self.plan)
+                plan["resource_changes"][4]["change"]["after"].update(fields)
+                check_plan(plan)
 
 
 if __name__ == "__main__":

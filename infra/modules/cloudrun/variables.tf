@@ -16,7 +16,12 @@ variable "qdrant_internal_ip" {
 
 variable "app_container_image" {
   type        = string
-  description = "Fully qualified Artifact Registry image URL to deploy."
+  description = "Immutable digest published by the deployment workflow."
+
+  validation {
+    condition     = can(regex("^europe-southwest1-docker\\.pkg\\.dev/basicrahgapp/historicguide-repo/historicguide@sha256:[0-9a-f]{64}$", var.app_container_image))
+    error_message = "Use an immutable digest from the dedicated HistoricGuide image package."
+  }
 }
 
 variable "service_account_email" {
@@ -27,8 +32,4 @@ variable "service_account_email" {
 variable "secret_id" {
   type        = string
   description = "Secret Manager secret id holding the app secrets JSON blob."
-}
-
-variable "common_labels" {
-  type = map(string)
 }

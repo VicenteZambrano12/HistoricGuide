@@ -4,10 +4,11 @@ import { StopTimelineBar } from '../../features/map/StopTimelineBar/StopTimeline
 import { RomeMapCanvas } from '../../features/map/RomeMapCanvas/RomeMapCanvas';
 import { HistorianVoicePanel } from '../../features/voiceGuide/HistorianVoicePanel/HistorianVoicePanel';
 import { RagTelemetryDrawer } from '../../features/rag/RagTelemetryDrawer/RagTelemetryDrawer';
+import { MonumentIllustration } from '../../components/MonumentIllustration/MonumentIllustration';
 import './TourWorkstationPage.css';
 
 export function TourWorkstationPage() {
-  const { layoutMode } = useTour();
+  const { layoutMode, currentStop } = useTour();
 
   return (
     <div
@@ -15,6 +16,7 @@ export function TourWorkstationPage() {
         layoutMode === 'MOBILE' ? 'workstation-page--mobile' : ''
       }`}
     >
+      <MonumentIllustration stop={currentStop} />
       <StopTimelineBar />
 
       <div className="workstation-page__grid">
