@@ -34,3 +34,4 @@ build/
 # Generated RAG snapshots
 database/provisional_db/*.sqlite3
 database/provisional_db/.*.tmp
+config/*

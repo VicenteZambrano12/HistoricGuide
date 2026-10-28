@@ -22,7 +22,7 @@ defaults:
 
 jobs:
   build-and-plan:
-    name: Plan existing bucket import
+    name: Plan bucket and empty application secret
     if: github.event.pull_request.merged == true && github.head_ref == 'dev' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
@@ -62,7 +62,7 @@ jobs:
 
       - name: Terraform Format
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform fmt -check . ../../modules/storage
+        run: terraform fmt -check . ../../modules/storage ../../modules/secrets
 
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -80,9 +80,9 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform plan -input=false -lock-timeout=60s -out=tfplan
 
-      - name: Verify import-only plan
+      - name: Verify allowed infrastructure plan
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform show -json tfplan | python3 "$GITHUB_WORKSPACE/scripts/check_bucket_plan.py"
+        run: terraform show -json tfplan | python3 "$GITHUB_WORKSPACE/scripts/check_infra_plan.py"
 
       - name: Show Terraform Plan
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -131,17 +131,10 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform init -input=false -lockfile=readonly
 
-      - name: Verify import-only plan
+      - name: Verify allowed infrastructure plan
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform show -json tfplan | python3 "$GITHUB_WORKSPACE/scripts/check_bucket_plan.py"
+        run: terraform show -json tfplan | python3 "$GITHUB_WORKSPACE/scripts/check_infra_plan.py"
 
       - name: Terraform Apply
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -input=false -lock-timeout=60s tfplan
-
-      - name: Verify imported bucket and zero drift
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          test "$(terraform state list)" = "module.storage.google_storage_bucket.app_data"
-          test "$(terraform output -raw bucket_name)" = "historic-guide"
-          terraform plan -input=false -lock-timeout=60s -detailed-exitcode

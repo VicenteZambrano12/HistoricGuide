@@ -21,6 +21,11 @@ module "storage" {
   region     = var.region
 }
 
+module "secrets" {
+  source     = "../../modules/secrets"
+  project_id = var.project_id
+}
+
 import {
   id = "historic-guide"
   to = module.storage.google_storage_bucket.app_data
