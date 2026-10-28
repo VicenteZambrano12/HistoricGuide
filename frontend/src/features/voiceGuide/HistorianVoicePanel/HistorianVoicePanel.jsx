@@ -9,15 +9,33 @@ const WAVE_HEIGHTS = [10, 18, 12, 26, 34, 20, 14, 30, 22, 38, 28, 16, 24, 34, 18
 
 export function HistorianVoicePanel() {
   const { messages, isChatPending, chatProgress, chatError, chatSessionId, t, resolveMessage } = useTour();
-  const endRef = useRef(null);
+  const transcriptRef = useRef(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const transcript = transcriptRef.current;
+    transcript?.scrollTo({
+      top: transcript.scrollHeight,
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'
+    });
   }, [messages]);
 
   return (
-    <aside className="voice-panel">
-      <div className="voice-panel__transcript">
+    <aside className="voice-panel" aria-labelledby="guide-title">
+      <header className="voice-panel__header">
+        <span className="voice-panel__avatar" aria-hidden="true"><ChatIcon name="history" /></span>
+        <div>
+          <h2 id="guide-title">{t('yourGuide')}</h2>
+          <p>{t('guideDescription')}</p>
+        </div>
+      </header>
+      <div className="voice-panel__transcript" ref={transcriptRef} role="log" aria-label={t('conversation')} aria-relevant="additions" tabIndex={0}>
+        {messages.length === 0 && (
+          <div className="voice-panel__empty">
+            <ChatIcon name="message" />
+            <h3>{t('guideEmptyTitle')}</h3>
+            <p>{t('guideEmptyBody')}</p>
+          </div>
+        )}
         {messages.map((msg) => (
           <div
             key={msg.id}
@@ -49,7 +67,6 @@ export function HistorianVoicePanel() {
             {msg.audio && <AudioAnswer audio={msg.audio} autoPlay={msg.autoPlay} />}
           </div>
         ))}
-        <div ref={endRef} />
       </div>
 
       {isChatPending && (

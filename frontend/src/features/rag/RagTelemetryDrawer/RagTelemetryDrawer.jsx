@@ -6,25 +6,8 @@ export function RagTelemetryDrawer() {
   const { t, chatSources, isChatPending } = useTour();
   return (
     <section className="rag-drawer" aria-label={t('sources')}>
-      <div className="rag-drawer__tabs" role="tablist" aria-label={t('sources')}>
-        <button
-          className="rag-drawer__tab"
-          type="button"
-          role="tab"
-          id="sources-tab"
-          aria-selected="true"
-          aria-controls="sources-panel"
-        >
-          {t('sources')}
-        </button>
-      </div>
-      <div
-        className="rag-drawer__panel"
-        role="tabpanel"
-        id="sources-panel"
-        aria-labelledby="sources-tab"
-        tabIndex={0}
-      >
+      <h2 className="rag-drawer__title">{t('sources')}</h2>
+      <div className="rag-drawer__panel" aria-live="polite">
         {chatSources.length ? (
           <ul className="rag-drawer__sources">
             {chatSources.map((source) => (

@@ -7,14 +7,24 @@
 .workstation-page__grid {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  grid-template-areas: 'map guide' 'sources guide';
   gap: 1.5rem;
   align-items: start;
 }
 
-.workstation-page__left {
-  display: flex;
-  flex-direction: column;
-  gap: 0.9rem;
+.workstation-page__grid > .rome-map {
+  grid-area: map;
+}
+
+.workstation-page__grid > .voice-panel {
+  grid-area: guide;
+}
+
+.workstation-page__grid > .rag-drawer {
+  grid-area: sources;
+}
+
+.workstation-page__grid > * {
   min-width: 0;
 }
 
@@ -25,10 +35,12 @@
 
 .workstation-page--mobile .workstation-page__grid {
   grid-template-columns: 1fr;
+  grid-template-areas: 'map' 'guide' 'sources';
 }
 
 @media (max-width: 900px) {
   .workstation-page__grid {
     grid-template-columns: 1fr;
+    grid-template-areas: 'map' 'guide' 'sources';
   }
 }

@@ -57,6 +57,20 @@ test('guide progress uses plain language instead of technical labels in both lan
   }
 });
 
+test('walking-atlas labels identify simulated navigation and accessible stop actions', () => {
+  for (const language of ['en', 'es']) {
+    const t = getTranslator(language);
+    const stop = TRANSLATIONS[language].stops['torre-argentina'];
+    assert.ok(t('tourPosition', { order: 1, total: 5 }).includes('5'));
+    assert.ok(t('mapStop', { order: 1, name: stop.name }).includes(stop.name));
+    assert.match(t('simulatedRoute'), /simulat|simulad/i);
+    assert.match(t('yourPosition'), /simulat|simulad/i);
+    for (const key of ['guideEmptyTitle', 'guideEmptyBody', 'voiceOn', 'voiceOff', 'guideDescription']) {
+      assert.doesNotMatch(t(key), /\b(TTS|STT|RAG|backend|pipeline)\b/i);
+    }
+  }
+});
+
 test('stop data and translations do not include canned guide narration', () => {
   for (const stop of ROME_STOPS) {
     assert.equal(Object.hasOwn(stop, 'overviewSpeech'), false);
@@ -80,7 +94,7 @@ test('stop data and translations do not include canned guide narration', () => {
 test('interpolates dictionary strings and rejects missing keys, values, and unsupported languages', () => {
   const t = getTranslator('es');
   assert.equal(t('currentStop', { order: 2, era: 'República' }),
-    'PARADA ACTUAL #2 • República');
+    'Parada 2 • República');
   assert.equal(getTranslator('en')('send'), 'Send');
   assert.equal(t('send'), 'Enviar');
   assert.throws(() => t('unknown'), /Missing translation/);

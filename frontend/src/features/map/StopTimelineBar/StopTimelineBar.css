@@ -1,53 +1,88 @@
 .stop-timeline {
+  position: relative;
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
-  gap: 0.6rem;
-  overflow-x: auto;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  overflow: hidden;
 }
 
 .stop-timeline__item {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 0.65rem 0.75rem;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--border-subtle);
+  border-bottom: 3px solid transparent;
+  padding: 1rem;
   cursor: pointer;
   text-align: left;
-  transition: all 0.2s ease;
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.4rem;
+}
+
+.stop-timeline__item:last-child {
+  border-right: 0;
 }
 
 .stop-timeline__item:hover {
-  border-color: var(--gold-primary);
-  background: var(--bg-card-hover);
+  background: var(--bg-card);
+}
+
+.stop-timeline__item:focus-visible {
+  outline-offset: -4px;
 }
 
 .stop-timeline__item--active {
   background: var(--gold-soft);
-  border-color: var(--gold-primary);
+  border-bottom-color: var(--gold-primary);
 }
 
 .stop-timeline__top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  color: var(--gold-primary);
+  gap: 0.6rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.stop-timeline__number {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  color: var(--text-travertine);
+}
+
+.stop-timeline__item--active .stop-timeline__number {
+  background: var(--gold-primary);
+  color: var(--on-gold);
 }
 
 .stop-timeline__name {
-  font-family: var(--font-display);
-  font-size: 0.78rem;
-  font-weight: 700;
+  font-size: 0.9rem;
+  font-weight: 600;
   color: var(--text-marble);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.4;
 }
 
 .stop-timeline__era {
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+@media (max-width: 700px) {
+  .stop-timeline {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+  }
+
+  .stop-timeline__item {
+    flex: 0 0 175px;
+    scroll-snap-align: start;
+  }
 }

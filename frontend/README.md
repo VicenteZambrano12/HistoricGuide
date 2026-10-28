@@ -6,8 +6,18 @@ Plinius uses `public/logo.jpeg` for the navbar logo and browser tab icon.
 
 The app opens directly to the live tour, without page-switching tabs.
 Use the **Light mode / Dark mode** button in the navbar to
-switch themes. Dark mode is the default; light mode uses warm marble surfaces
-with darker gold, green, and blue accents across the tour and map.
+switch themes. Dark mode is the default. The Roman walking-atlas design uses
+slate-blue surfaces, river-blue controls, and bronze route lines; light mode
+uses limestone-white surfaces with darker blue controls.
+Marcellus landmark headings and DM Sans interface text load from Google Fonts,
+with local serif and sans-serif fallbacks when unavailable.
+The current landmark's architectural illustration heads the tour, followed by
+a five-stop route, illustrated map, guide conversation, and PDF sources.
+On small screens the route scrolls horizontally, the content stacks, and map
+pins use numbers corresponding to the route instead of tiny place labels.
+Map pins support Enter and Space, the current stop is announced, and a
+keyboard skip link leads directly to the tour. Motion respects reduced-motion
+preferences; new chat messages scroll only the transcript, not the whole page.
 The choice is saved in browser local storage and restored before the app renders.
 If storage is blocked, switching still works for the current visit and a warning
 is logged in the browser console.
@@ -54,7 +64,9 @@ errors are logged to the browser console. Reload the page to check again.
 Availability only confirms API liveness, not chat or external-service readiness.
 Walking and GPS remain simulated.
 
-The map scales to show all five stops. The current-stop panel sits below the
+The map scales to show all five stops and explicitly labels the walk and
+position as simulated. It is an illustrated route, not street navigation.
+The current-stop panel sits below the
 map rather than covering the route or labels. Press **I arrived** when you
 reach a stop to request its introduction.
 
@@ -91,7 +103,7 @@ freeform messages omit it so the backend selects the topic automatically.
 
 Press **Microphone** to record, then **Stop and send** to submit the voice
 message. Recording requires microphone permission and HTTPS or localhost.
-Sent recordings appear as gold-accented voice bubbles with a microphone icon,
+Sent recordings appear as blue-accented voice bubbles with a microphone icon,
 a decorative waveform, and a translated "Voice message" label instead of the
 filename. User voice bubbles are visual only, without audio playback controls;
 the guide's audio replies use the orb player described below.
@@ -101,15 +113,15 @@ when a pending permission request resolves after navigation.
 Recordings must be nonempty and at most 14,000,000 bytes. WAV replies
 from recorded voice messages are played explicitly with the transcript's audio
 controls. Enabling the navbar's voice toggle only affects future responses: it
-does not send a request or replay the current answer. While enabled, **Replay Arrival
-Overview**, typed messages, and suggested questions request backend `tts` audio
+does not send a request or replay the current answer. While enabled, **Replay
+introduction**, typed messages, and suggested questions request backend `tts` audio
 instead of browser speech synthesis. Narration replies attempt to play
 automatically; if the browser blocks playback, an error is shown and the orb
 remains available for manual playback. Disabling narration pauses its audio
 and restores text replies. The toggle is disabled while chatting, walking, or
 recording to avoid overlapping requests.
 
-Guide audio replies use an ElevenLabs-inspired gold-and-marble orb instead of
+Guide audio replies use a river-blue orb instead of
 the browser's native player. Tap the orb to play or pause; the swirling animation
 runs only during playback and respects reduced-motion preferences. Seeking,
 elapsed/total time, volume, and mute controls support keyboard input and English

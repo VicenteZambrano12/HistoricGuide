@@ -3,42 +3,30 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  box-shadow: var(--shadow-elevated);
 }
 
 .rome-map__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.8rem 1.1rem;
+  padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--border-subtle);
-  background: var(--map-header);
   flex-wrap: wrap;
   gap: 0.5rem;
 }
 
 .rome-map__title {
   font-family: var(--font-display);
-  font-size: 0.88rem;
-  letter-spacing: 0.08em;
-  color: var(--gold-primary);
+  font-weight: 400;
+  font-size: 1.25rem;
 }
 
 .rome-map__gps-pill {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--cyan-gps);
-  background: rgba(56, 189, 248, 0.1);
-  border: 1px solid rgba(56, 189, 248, 0.3);
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 .rome-map__stage {
-  width: 100%;
   display: flex;
   flex-direction: column;
   background: var(--map-background);
@@ -48,66 +36,126 @@
   width: 100%;
   height: auto;
   aspect-ratio: 700 / 540;
-  max-height: 440px;
   display: block;
 }
 
 .rome-map__pin {
   cursor: pointer;
-  transition: transform 0.2s ease;
+}
+
+.rome-map__pin:focus-visible {
+  outline: none;
+}
+
+.rome-map__pin:focus-visible > circle:first-child,
+.rome-map__pin:hover > circle:first-child {
+  stroke: var(--gold-primary);
+  stroke-width: 3px;
+  fill: var(--gold-soft);
+}
+
+.rome-map__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  padding: 0.25rem 1.25rem 1rem;
+  font-size: 0.75rem;
+  color: var(--text-travertine);
+}
+
+.rome-map__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.rome-map__route-key {
+  width: 24px;
+  border-top: 2px dashed var(--map-route);
+}
+
+.rome-map__position-key {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--cyan-gps);
 }
 
 .rome-map__floating-hud {
-  margin: 0 14px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.7rem 1rem;
+  padding: 1.25rem;
   background: var(--map-hud);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--gold-border);
-  border-radius: var(--radius-md);
-  gap: 0.75rem;
+  border-top: 1px solid var(--border-subtle);
+  gap: 1rem;
   flex-wrap: wrap;
 }
 
 .rome-map__hud-info {
   display: flex;
   flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
 }
 
 .rome-map__hud-label {
-  font-family: var(--font-mono);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
-  text-transform: uppercase;
 }
 
 .rome-map__hud-stop {
-  font-family: var(--font-display);
-  font-size: 0.92rem;
+  font-size: 1rem;
   color: var(--text-marble);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .rome-map__arrive-btn {
-  background: linear-gradient(135deg, #d4af37, #b5891c);
-  color: #0b0a09;
+  background: var(--gold-primary);
+  color: var(--on-gold);
   font-weight: 700;
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   border: none;
-  padding: 0.55rem 1.05rem;
+  padding: 0.7rem 1.2rem;
+  min-height: 44px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(212, 175, 55, 0.35);
-  transition: transform 0.15s ease;
 }
 
 .rome-map__arrive-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
+  box-shadow: 0 0 0 4px var(--gold-soft);
 }
 
 .rome-map__arrive-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+@media (max-width: 600px) {
+  .rome-map__pin > circle:last-of-type {
+    r: 26px;
+  }
+
+  .rome-map__pin[aria-current] > circle:nth-of-type(2) {
+    r: 38px;
+  }
+
+  .rome-map__pin > text {
+    font-size: 30px;
+  }
+
+  .rome-map__gps-ring {
+    r: 32px;
+  }
+
+  .rome-map__pin rect {
+    display: none;
+  }
+
+  .rome-map__pin text:last-child {
+    display: none;
+  }
+
+  .rome-map__pin > circle:first-child {
+    r: 56px;
+  }
 }
