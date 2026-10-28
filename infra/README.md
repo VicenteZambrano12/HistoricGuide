@@ -4,20 +4,22 @@ Earlier stages adopted `gs://historic-guide` and created the global
 `historicguide-secrets` container in `basicrahgapp`. Its JSON versions were
 populated separately through the CLI; Terraform manages only secret metadata.
 
-The current stage preserves those resources and adopts the dedicated Docker
-repository **`historicguide-repo` in `europe-southwest1`**, then builds and
-publishes the single application image through the existing workflow.
+The current stage preserves the bucket, secret, and dedicated Docker repository
+and creates **`historicguide-backend` in `europe-southwest1`** through the existing
+workflow. It follows the Cloud Run example: public frontend/API, 2 CPU / 2 GiB,
+and minimum/maximum one instance. The minimum instance incurs ongoing idle costs.
 It retains **two images total**, not a current image plus two previous ones.
-It does not read `.env`, change secret versions or IAM through Terraform,
-deploy Cloud Run, create Qdrant resources, or activate the other example
-modules. Other applications' repositories, images, and secrets are untouched.
+It does not upload secret versions, create Qdrant/network resources, or activate
+the other example modules. Other applications' infrastructure is not changed.
 
 The existing workflow, [terraform-deploy.yml](../.github/workflows/terraform-deploy.yml),
 keeps its original sequence: merge a same-repository `dev` PR into `main`,
-plan, upload the saved plan, then apply that exact plan in the `prod` environment.
-Image publication follows apply so the repository import and cleanup policies
-are reviewed before its first Docker push. Both jobs remain in the same workflow and use its existing
-approval gate; no separate deployment workflow is introduced.
+build/push or reuse the image, resolve its immutable digest, plan, upload the
+saved plan, then apply that exact plan in the protected `prod` environment.
+The earlier repository bootstrap is complete, so publication now precedes the
+plan: Cloud Run must review and deploy the exact same digest. Image publication
+and pruning occur before approval; service deployment occurs only after approval.
+Both jobs remain in the same workflow; no separate deployment workflow is introduced.
 It does not run on a push, an unmerged PR close, a differently named source branch,
 or a manual Actions dispatch.
 
@@ -36,30 +38,37 @@ or a manual Actions dispatch.
   adoption does not require updating the bucket.
 - `prevent_destroy = true` and `force_destroy = false` protect the bucket.
 - The [plan checker](../scripts/check_infra_plan.py) allows exactly the bucket,
-  `module.secrets.google_secret_manager_secret.app_secrets`, and
-  `module.artifact_registry.google_artifact_registry_repository.default`. The bucket
+  `module.secrets.google_secret_manager_secret.app_secrets`,
+  `module.artifact_registry.google_artifact_registry_repository.default`,
+  `module.cloudrun.google_cloud_run_v2_service.backend`, and
+  `module.cloudrun.google_cloud_run_service_iam_member.public_access`. The bucket
   must remain unchanged, with an optional import of `historic-guide`. The
   global `historicguide-secrets` secret may be created or remain unchanged;
   updates, deletion, replacement, imports of other secrets, extra resources,
   moves, incomplete plans, and deferred changes are rejected before upload and
   again before apply. The dedicated repository may be imported or unchanged;
   only its cleanup policies may change during import. Its two-image cleanup
-  policies are enforced. Secret-version, IAM, and Cloud
-  Run resources are not allowed.
+  policies are enforced. Cloud Run may be created or updated in place only with
+  the plan input's immutable HistoricGuide digest, expected account/subnet,
+  JSON secret reference, runtime settings, resources, and API startup probe.
+  Its only allowed IAM resource grants `roles/run.invoker` to `allUsers` on
+  `historicguide-backend`, matching the public example. Deletion/replacement,
+  secret versions, additional IAM, networking, and unrelated resources are rejected.
 - The secret also uses `prevent_destroy = true`. Only its metadata enters
   Terraform state; there is no secret value in configuration, plans, or state.
 - Bucket objects and bucket IAM are deliberately outside Terraform in this
   step. Existing runtime access and all PDFs/prompts remain unchanged.
 - The backend bucket itself is pre-existing bootstrap infrastructure; this
   configuration does not import it. The expected cloud writes are state/locks,
-  repository import/cleanup-policy updates, image uploads, and removal of application images beyond
-  the newest two.
+  image uploads, removal of images beyond the newest two, and the reviewed
+  Cloud Run service/public-invoker creation or in-place service updates.
 
 ## 1. One-time GCP bootstrap (manual)
 
 The initial bucket bootstrap is already configured for this repository. The
 commands below document that setup; do not recreate verified existing resources.
-Secret permissions are documented in **1d** and registry permissions in **1e**.
+Secret permissions are documented in **1d**, registry permissions in **1e**,
+and the approved Cloud Run bootstrap in **1f**.
 Use an administrator identity authorized to create WIF providers/custom roles
 and add IAM bindings. These are **not** workflow steps:
 GitHub needs these permissions before Terraform can authenticate or store state.
@@ -186,14 +195,15 @@ gcloud projects add-iam-policy-binding basicrahgapp \
 ```
 
 The create permission is necessarily project-scoped; the workflow plan checker
-limits this migration to the named secret. Do not grant Secret Manager Admin
-or Secret Accessor for this step. If a newly created custom role is temporarily
+limits this migration to the named secret. Secret Manager Admin is unnecessary;
+runtime Secret Accessor was added later, only on this secret, as described in 1f.
+If a newly created custom role is temporarily
 reported as missing, allow IAM propagation and retry only the failed binding.
 Do not run `gcloud secrets create`: creation belongs to the reviewed Terraform
 plan and apply.
 
 The JSON payload was uploaded separately through the CLI; runtime access is
-still a separate migration step. Do not
+documented in 1f. Do not
 put real values in Terraform variables, source files, commits, or plan artifacts.
 
 ### 1e. Repository-scoped publishing and retention permissions
@@ -258,8 +268,59 @@ enforces the cap immediately after successful publication. Buildx disables
 provenance/SBOM side manifests and builds only `linux/amd64` so retention counts
 application images rather than extra attestation artifacts.
 
-The published digest is recorded in the job summary. The workflow does not
-deploy it to Cloud Run or read the application JSON secret.
+The digest is passed as `TF_VAR_app_container_image` when generating the saved
+plan, and recorded with the Cloud Run URL in the deployment summary.
+The workflow never reads the application JSON payload.
+
+### 1f. Approved Cloud Run bootstrap and runtime configuration
+
+These grants have already been applied through the CLI to
+`historicguide@basicrahgapp.iam.gserviceaccount.com`:
+
+| Scope | Role / permissions |
+| --- | --- |
+| Project `basicrahgapp` | Custom `historicGuideRunDeploy`: `run.services.create`, `run.services.get`, `run.services.update`, `run.services.getIamPolicy`, `run.services.setIamPolicy`, `run.operations.get` |
+| The HistoricGuide service account itself | `roles/iam.serviceAccountUser` to attach that account to Cloud Run |
+| Secret `historicguide-secrets` only | `roles/secretmanager.secretAccessor` |
+| Subnet `serverless-egress-subnet` only | `roles/compute.networkUser` |
+
+The project-level deployment role is an explicitly approved bootstrap exception:
+Cloud Run does not support resource-name IAM conditions. Until it is narrowed,
+this role can also update settings/IAM on other Cloud Run services in this project,
+but cannot delete services. After the first successful deployment, service-management
+permissions can be bound directly to `historicguide-backend`, retaining separately
+scoped project operation reads. Do not attempt that before the service exists.
+No Owner, Editor, Cloud Run Admin, or project-wide secret access was granted.
+
+The existing Cloud Run service agent already has `roles/run.serviceAgent`, which
+provides same-project image pulling and Direct VPC networking permissions.
+No new network/subnet/firewall or service account is created. Direct VPC egress
+uses the existing `serverless-egress-subnet` (`10.0.2.0/24`) in
+`portfolio-demo-vpc`, with `PRIVATE_RANGES_ONLY`. The existing
+`allow-cloud-run-to-qdrant` firewall rule permits TCP 6333 from that subnet to
+`qdrant-vm` at `10.0.1.2`.
+
+Cloud Run injects the global secret's `latest` version into `APP_SECRETS_JSON`,
+as in the example. The backend accepts a nonempty JSON object of string values;
+invalid JSON/configuration types fail container startup without exposing values.
+Configuration precedence is process environment, JSON secret, root `.env`, then
+defaults. Cloud Run explicitly sets `ENV=GCP`, project/location, and the private
+Qdrant host/port. Other settings, including both API keys, bucket, models and
+collection, come from the single JSON secret. The container uses its attached
+account's Application Default Credentials, never the local service-account key.
+Terraform stores only the secret reference, not its payload.
+New secret versions do not refresh running instances; deploy a new revision to
+consume changed values.
+
+The first Cloud Run merge rebuilds the image because the existing published
+image predates JSON-secret support. It is pushed and digest-resolved by the same
+workflow before planning; no local Docker installation is necessary.
+
+**Runtime prerequisite:** `qdrant-vm` was verified **TERMINATED** during this
+preparation and has not been started. The `historic_guide` collection was absent
+at the earlier check and needs rechecking when the VM is available. This step
+does not start the VM or migrate its data. `/api/health` is process liveness:
+successful frontend/health checks do not prove chat or Qdrant readiness.
 
 ## 2. Configure GitHub before merging
 
@@ -297,7 +358,7 @@ Open [repository settings](https://github.com/VicenteZambrano12/HistoricGuide/se
    If your GitHub plan/repository settings do not allow required reviewers,
    stop rather than merging without the intended approval gate.
 
-No additional GitHub variables or secrets are needed for image publication.
+No additional GitHub variables or secrets are needed for Cloud Run.
 The repository and image path come from Terraform. GitHub's hosted runner
 provides Docker; local Docker is not required to trigger the workflow. No
 application payload or service-account JSON key is passed into the build.
@@ -305,22 +366,23 @@ Allow a few minutes for new IAM bindings to propagate.
 
 ## 3. Commit only this migration on `dev`
 
-There are other uncommitted application changes. Do not use `git add .`.
-Review the listed paths, then stage only:
+Review `git status` and do not use `git add .`. Stage only this migration:
 
 ```sh
 git add .github/workflows/terraform-deploy.yml \
   infra/README.md \
   infra/environments/prod/main.tf \
   infra/environments/prod/outputs.tf \
-  infra/modules/artifact_registry/main.tf \
-  infra/modules/artifact_registry/variables.tf \
+  infra/environments/prod/variables.tf \
+  infra/modules/cloudrun/main.tf infra/modules/cloudrun/variables.tf \
+  backend/src/container.py backend/src/utils/general/GeminiApiCall.py \
+  backend/tests/test_container.py backend/tests/test_gemini_client.py \
   scripts/check_infra_plan.py scripts/tests/test_check_infra_plan.py \
-  scripts/registry_images.py scripts/tests/test_registry_images.py README.md
+  README.md
 
 git diff --cached --stat
 git diff --cached --check
-git commit -m "infra: publish HistoricGuide images with two-image retention" \
+git commit -m "infra: deploy HistoricGuide to Cloud Run through Terraform" \
   -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 git push -u origin dev
 ```
@@ -333,38 +395,33 @@ GitHub repository variables.
 ## 4. Merge and approve through GitHub
 
 1. Open **Pull requests → New pull request**: base `main`, compare `dev`.
-2. Review **Files changed**: the active root must contain only the storage
-   module, its retained import block, secret metadata, and the dedicated
-   Artifact Registry module. No active Cloud Run, networking, Qdrant,
-   secret-version, or IAM resources
-   should appear.
+2. Review **Files changed**: the active root preserves storage/secret/registry
+   and activates only the adapted Cloud Run module and its public invoker.
+   No networking, Qdrant, secret-version, or additional IAM resources should appear.
 3. Merge the PR. This triggers the existing **closed + merged dev PR**
    workflow. Simply pushing `dev` will not run it.
 4. Open **Actions → Deploy GCP Infrastructure (Terraform)** and select the run.
-5. Open **Plan infrastructure and image publication → Show Terraform Plan**.
-   With the bucket and secret already managed, this stage must say **1 to
-   import, 0 to add, 1 to change, 0 to destroy**, adopting only
-   `module.artifact_registry.google_artifact_registry_repository.default` and
-   adding its two cleanup policies. If the bucket
-   has not yet been adopted, **1 to import** is also allowed. New metadata
-   outputs are expected. If all three resources are already managed, a zero-change
-   plan is valid.
+5. Open **Build image and plan Cloud Run → Show Terraform Plan**.
+   The first Cloud Run deployment must show **2 to add, 0 to change, 0 to destroy**:
+   only `historicguide-backend` and its public invoker. Bucket, secret metadata,
+   and repository must stay unchanged. Check the image is in
+   `historicguide-repo/historicguide@sha256:...`, port 8080, the expected account,
+   private subnet, and JSON secret reference. No secret values should appear.
 6. Only after inspecting that plan, click **Review deployments → prod →
    Approve and deploy**. The apply job downloads and revalidates the saved
    plan; it never calculates a different plan for apply.
 7. Approve within the plan artifact's one-day retention period. If it expires,
    rerun all jobs to generate and review a fresh plan.
-8. Check **Terraform Apply** succeeds and reports repository import/policy setup.
-   It then builds/pushes or reuses the image, resolves its digest, and enforces
-   two-image retention. No post-apply bucket verification or second drift plan
-   is added.
-9. Check **Record published image** and the job summary for the immutable
-   image reference. Verify the run succeeds before using that digest later.
+8. Check **Terraform Apply**, then **Verify Cloud Run frontend and API** succeed.
+   The startup probe and HTTP checks use `/api/health`; `/` must serve HTML.
+   No post-apply bucket verification or second drift plan is added.
+9. Open **Record Cloud Run deployment** and the job summary for the URL and
+   immutable image reference. Open the URL to view the frontend. Test chat only
+   after Qdrant is running with the correct collection and embedding model.
 
-The expected result is the existing state tracking three metadata resources,
-the bucket and JSON secret versions unchanged, and the application image in
-the dedicated repository. There is no Cloud Run deployment or runtime secret
-access configured yet.
+The expected result is the isolated state tracking five resources, the bucket
+and JSON secret versions unchanged, and the public frontend/API running from
+the workflow-published digest in the dedicated repository.
 The import block can stay: later runs are idempotent and do not re-import a
 resource already in this state.
 
@@ -388,9 +445,13 @@ resource already in this state.
   1e and the repository-scoped custom role. Repository reads, policy updates,
   Docker pushes, and retention all use this direct binding; do not replace it
   with an unsupported project-level resource-name condition or broaden access.
-- A Docker build/push failure can happen after Terraform successfully imported
-  the repository. Fix the build error and rerun all jobs; the existing registry
-  is retained, and already-published SHA tags are reused.
+- A Docker build/push failure now happens before the Cloud Run plan/apply.
+  Fix the build error and rerun all jobs; already-published SHA tags are reused.
+- Cloud Run secret access denied: check the direct Secret Accessor binding on
+  `historicguide-secrets`, its enabled version, and the runtime account.
+- Private Qdrant failures: start/check the existing VM separately, verify its
+  collection/model and API key, then subnet/firewall connectivity. Do not change
+  unrelated network resources or assume a healthy HTTP process means chat works.
 - Unexpected changes in the plan: **do not approve** or weaken the checker.
   Compare the live resource metadata to its module and fix the mismatch.
 - Do not use `terraform init -migrate-state`, copy example state, force-unlock
@@ -401,8 +462,8 @@ changes. A working directory already initialized against the GCS backend may
 still require authorized Application Default Credentials during initialization:
 
 ```sh
-terraform -chdir=infra/environments/prod fmt -check . ../../modules/storage ../../modules/secrets ../../modules/artifact_registry
+terraform -chdir=infra/environments/prod fmt -check . ../../modules/storage ../../modules/secrets ../../modules/artifact_registry ../../modules/cloudrun
 terraform -chdir=infra/environments/prod init -backend=false -input=false -lockfile=readonly
 terraform -chdir=infra/environments/prod validate
-uv run --project backend --locked python -m unittest scripts.tests.test_check_infra_plan scripts.tests.test_registry_images
+ENV=LOCAL PYTHONPATH=backend uv run --project backend --locked python -m unittest scripts.tests.test_check_infra_plan scripts.tests.test_registry_images backend.tests.test_container backend.tests.test_gemini_client
 ```

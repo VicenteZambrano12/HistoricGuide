@@ -77,6 +77,11 @@ class ContainerTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             create_app(self.frontend / "missing")
 
+    def test_invalid_json_secret_prevents_container_startup(self) -> None:
+        with patch.dict(os.environ, {"APP_SECRETS_JSON": "invalid-secret-value"}):
+            with self.assertRaisesRegex(ValueError, "APP_SECRETS_JSON"):
+                create_app(self.frontend)
+
 
 if __name__ == "__main__":
     unittest.main()

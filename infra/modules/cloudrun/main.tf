@@ -1,17 +1,13 @@
 resource "google_cloud_run_v2_service" "backend" {
-  name                = "basicragapp-backend"
+  project             = var.project_id
+  name                = "historicguide-backend"
   location            = var.region
   ingress             = "INGRESS_TRAFFIC_ALL"
   deletion_protection = false
 
-  labels = merge(var.common_labels, { component = "backend" })
-
   template {
     service_account = var.service_account_email
 
-    # No Redis is wired up, so session state lives in fakeredis: an in-memory
-    # cache local to a single process. Pin to exactly one instance so every
-    # request is served by the same process and the cache is actually shared.
     scaling {
       min_instance_count = 1
       max_instance_count = 1
@@ -19,6 +15,15 @@ resource "google_cloud_run_v2_service" "backend" {
 
     containers {
       image = var.app_container_image
+
+      ports {
+        container_port = 8080
+      }
+
+      env {
+        name  = "ENV"
+        value = "GCP"
+      }
 
       env {
         name  = "QDRANT_HOST"
@@ -40,13 +45,6 @@ resource "google_cloud_run_v2_service" "backend" {
         value = var.region
       }
 
-      # Single worker so fakeredis's in-memory cache (no real Redis configured) is
-      # shared by every request instead of being split across sibling processes.
-      env {
-        name  = "MAX_WORKERS"
-        value = "1"
-      }
-
       env {
         name = "APP_SECRETS_JSON"
         value_source {
@@ -57,12 +55,22 @@ resource "google_cloud_run_v2_service" "backend" {
         }
       }
 
-      # Default 512Mi was getting OOM-killed by the ML/genai import stack across gunicorn workers.
       resources {
         limits = {
           cpu    = "2"
           memory = "2Gi"
         }
+      }
+
+      startup_probe {
+        http_get {
+          path = "/api/health"
+          port = 8080
+        }
+        initial_delay_seconds = 10
+        period_seconds        = 10
+        timeout_seconds       = 5
+        failure_threshold     = 24
       }
     }
 
@@ -72,6 +80,11 @@ resource "google_cloud_run_v2_service" "backend" {
       }
       egress = "PRIVATE_RANGES_ONLY"
     }
+  }
+
+  traffic {
+    type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+    percent = 100
   }
 }
 

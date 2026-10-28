@@ -6,12 +6,14 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from src.app import app as backend_app, lifespan
+from src.utils.general.GeminiApiCall import _json_configuration
 
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend/dist"
 
 
 def create_app(frontend_directory: Path = FRONTEND_DIST) -> FastAPI:
+    _json_configuration()
     application = FastAPI(
         lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None,
     )

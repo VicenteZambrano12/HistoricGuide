@@ -33,6 +33,17 @@ module "artifact_registry" {
   repository_id = "historicguide-repo"
 }
 
+module "cloudrun" {
+  source                = "../../modules/cloudrun"
+  project_id            = var.project_id
+  region                = var.region
+  app_container_image   = var.app_container_image
+  service_account_email = "historicguide@basicrahgapp.iam.gserviceaccount.com"
+  secret_id             = module.secrets.secret_id
+  serverless_subnet_id  = "projects/${var.project_id}/regions/${var.region}/subnetworks/serverless-egress-subnet"
+  qdrant_internal_ip    = "10.0.1.2"
+}
+
 import {
   id = "historic-guide"
   to = module.storage.google_storage_bucket.app_data

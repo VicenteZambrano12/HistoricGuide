@@ -6,6 +6,17 @@ variable "project_id" {
     condition     = var.project_id == "basicrahgapp"
     error_message = "This import must use the existing basicrahgapp project."
   }
+
+}
+
+variable "app_container_image" {
+  type        = string
+  description = "Immutable HistoricGuide image digest resolved by the existing workflow."
+
+  validation {
+    condition     = can(regex("^europe-southwest1-docker\\.pkg\\.dev/basicrahgapp/historicguide-repo/historicguide@sha256:[0-9a-f]{64}$", var.app_container_image))
+    error_message = "The application image must be an immutable digest in historicguide-repo/historicguide."
+  }
 }
 
 variable "region" {

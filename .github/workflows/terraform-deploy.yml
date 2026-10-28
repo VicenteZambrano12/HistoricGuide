@@ -24,7 +24,7 @@ defaults:
 
 jobs:
   build-and-plan:
-    name: Plan infrastructure and image publication
+    name: Build image and plan Cloud Run
     if: github.event.pull_request.merged == true && github.head_ref == 'dev' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
@@ -32,7 +32,7 @@ jobs:
       id-token: write
       pull-requests: read
     outputs:
-      app_changed: ${{ steps.filter.outputs.app }}
+      image: ${{ steps.published.outputs.image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -81,7 +81,7 @@ jobs:
 
       - name: Terraform Format
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform fmt -check . ../../modules/storage ../../modules/secrets ../../modules/artifact_registry
+        run: terraform fmt -check . ../../modules/storage ../../modules/secrets ../../modules/artifact_registry ../../modules/cloudrun
 
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -95,71 +95,6 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: test "$(terraform workspace show)" = "default"
 
-      - name: Terraform Plan
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform plan -input=false -lock-timeout=60s -out=tfplan
-
-      - name: Verify allowed infrastructure plan
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform show -json tfplan | python3 "$GITHUB_WORKSPACE/scripts/check_infra_plan.py"
-
-      - name: Show Terraform Plan
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform show -no-color tfplan
-
-      - name: Upload plan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: ${{ env.TF_WORKING_DIR }}/tfplan
-          retention-days: 1
-          if-no-files-found: error
-
-  apply:
-    needs: build-and-plan
-    runs-on: ubuntu-latest
-    environment: prod
-    permissions:
-      contents: read
-      id-token: write
-    outputs:
-      image: ${{ steps.published.outputs.image }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Authenticate to GCP (Workload Identity Federation)
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_TERRAFORM_SERVICE_ACCOUNT }}
-
-      - name: Download plan artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan
-          path: ${{ env.TF_WORKING_DIR }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Terraform Init
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform init -input=false -lockfile=readonly
-
-      - name: Verify allowed infrastructure plan
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform show -json tfplan | python3 "$GITHUB_WORKSPACE/scripts/check_infra_plan.py"
-
-      - name: Terraform Apply
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform apply -input=false -lock-timeout=60s tfplan
-
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
@@ -169,7 +104,7 @@ jobs:
       - name: Set image tag and build flag
         id: image
         env:
-          APP_CHANGED: ${{ needs.build-and-plan.outputs.app_changed }}
+          APP_CHANGED: ${{ steps.filter.outputs.app }}
         run: |
           python3 scripts/registry_images.py select \
             --image-base "$(terraform -chdir="$TF_WORKING_DIR" output -raw artifact_registry_image)" \
@@ -218,9 +153,90 @@ jobs:
           python3 scripts/registry_images.py prune \
             --image-base "$IMAGE_BASE" --keep-digest "${IMAGE##*@}"
 
-      - name: Record published image
+      - name: Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
         env:
-          IMAGE: ${{ steps.published.outputs.image }}
+          TF_VAR_app_container_image: ${{ steps.published.outputs.image }}
+        run: terraform plan -input=false -lock-timeout=60s -out=tfplan
+
+      - name: Verify allowed infrastructure plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform show -json tfplan | python3 "$GITHUB_WORKSPACE/scripts/check_infra_plan.py"
+
+      - name: Show Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform show -no-color tfplan
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
+          retention-days: 1
+          if-no-files-found: error
+
+  apply:
+    needs: build-and-plan
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ needs.build-and-plan.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -input=false -lockfile=readonly
+
+      - name: Verify allowed infrastructure plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform show -json tfplan | python3 "$GITHUB_WORKSPACE/scripts/check_infra_plan.py"
+
+      - name: Terraform Apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -input=false -lock-timeout=60s tfplan
+
+      - name: Verify Cloud Run frontend and API
         run: |
-          printf '## HistoricGuide image\n\n`%s`\n\nRetention: two newest images total.\n' \
-            "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
+          URL="$(terraform -chdir="$TF_WORKING_DIR" output -raw cloud_run_url)"
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 --max-time 30 \
+            "$URL/api/health" | python3 -c \
+            'import json, sys; sys.exit(0 if json.load(sys.stdin) == {"status": "ok"} else "::error::Unexpected API health response.")'
+          CONTENT_TYPE="$(curl --fail --silent --show-error --retry 5 --retry-delay 5 \
+            --max-time 30 --output /dev/null --write-out '%{content_type}' "$URL/")"
+          if [[ "$CONTENT_TYPE" != text/html* ]]; then
+            echo "::error::Cloud Run did not serve the frontend HTML."
+            exit 1
+          fi
+
+      - name: Record Cloud Run deployment
+        env:
+          IMAGE: ${{ needs.build-and-plan.outputs.image }}
+        run: |
+          URL="$(terraform -chdir="$TF_WORKING_DIR" output -raw cloud_run_url)"
+          printf '## HistoricGuide Cloud Run\n\nURL: %s\n\nImage: `%s`\n\nRetention: two newest images total.\n\nHealth checks prove HTTP serving, not Qdrant/chat readiness.\n' \
+            "$URL" "$IMAGE" >> "$GITHUB_STEP_SUMMARY"

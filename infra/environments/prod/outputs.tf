@@ -4,8 +4,13 @@ output "bucket_name" {
 }
 
 output "secret_id" {
-  description = "Empty application secret reserved for a future JSON payload."
+  description = "Application secret containing the runtime JSON configuration."
   value       = module.secrets.secret_id
+}
+
+output "cloud_run_url" {
+  description = "Public frontend URL; API routes are under /api."
+  value       = module.cloudrun.cloud_run_url
 }
 
 output "secret_name" {

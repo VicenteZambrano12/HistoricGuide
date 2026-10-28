@@ -1,13 +1,35 @@
 .main-layout {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .main-layout__content {
   flex: 1;
   width: 100%;
-  max-width: 1480px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 1.1rem 1.4rem 2rem;
+  padding: 2rem clamp(1rem, 3vw, 3rem) 3rem;
+}
+
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 1rem;
+  z-index: 100;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--gold-primary);
+  color: var(--on-gold);
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+@media (max-width: 600px) {
+  .main-layout__content {
+    padding-top: 1rem;
+  }
 }
