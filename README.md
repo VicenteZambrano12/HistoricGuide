@@ -234,8 +234,10 @@ uv run --project backend --locked uvicorn src.container:create_app \
 
 The local combined server also serves `/api/health`; it needs the frontend
 build from the preceding command. Real chat requests still require the data
-source configuration described below. Cloud Run deployment and image
-publication remain separate migration steps.
+source configuration described below. Image publication is now prepared in
+the existing Terraform workflow; see the
+[Artifact Registry workflow guide](infra/README.md). Cloud Run deployment
+remains a separate migration step.
 
 ### Local or GCP data sources
 

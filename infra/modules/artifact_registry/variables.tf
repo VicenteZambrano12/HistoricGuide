@@ -9,7 +9,3 @@ variable "location" {
 variable "repository_id" {
   type = string
 }
-
-variable "common_labels" {
-  type = map(string)
-}

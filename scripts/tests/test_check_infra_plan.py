@@ -28,45 +28,73 @@ class InfrastructurePlanTests(unittest.TestCase):
                 "change": {
                     "actions": ["create"],
                     "after": {
-                        "secret_id": "historicguide-secrets",
-                        "project": "basicrahgapp",
+                        "secret_id": "historicguide-secrets", "project": "basicrahgapp",
                         "replication": [{"auto": [{}], "user_managed": []}],
+                    },
+                },
+            }, {
+                "address": "module.artifact_registry.google_artifact_registry_repository.default",
+                "mode": "managed",
+                "type": "google_artifact_registry_repository",
+                "change": {
+                    "actions": ["update"],
+                    "importing": {
+                        "id": "projects/basicrahgapp/locations/europe-southwest1/repositories/historicguide-repo",
+                    },
+                    "after": {
+                        "project": "basicrahgapp", "location": "europe-southwest1",
+                        "repository_id": "historicguide-repo", "format": "DOCKER",
+                        "mode": "STANDARD_REPOSITORY",
+                        "cleanup_policy_dry_run": False,
+                        "cleanup_policies": [{
+                            "id": "keep-last-2-historicguide", "action": "KEEP",
+                            "most_recent_versions": [{
+                                "keep_count": 2, "package_name_prefixes": ["historicguide"],
+                            }],
+                        }, {
+                            "id": "delete-old-historicguide", "action": "DELETE",
+                            "condition": [{"tag_state": "ANY", "package_name_prefixes": ["historicguide"]}],
+                        }],
                     },
                 },
             }],
         }
+        registry = self.plan["resource_changes"][2]["change"]
+        registry["before"] = copy.deepcopy(registry["after"])
+        registry["before"]["cleanup_policies"] = []
+        registry["before"]["cleanup_policy_dry_run"] = True
 
-    def test_bucket_import_and_empty_secret_creation_are_allowed(self) -> None:
+    def test_import_and_metadata_creation_are_allowed(self) -> None:
         check_plan(self.plan)
 
     def test_already_imported_no_op_is_allowed(self) -> None:
         del self.plan["resource_changes"][0]["change"]["importing"]
         check_plan(self.plan)
 
-    def test_both_resources_already_managed_are_allowed(self) -> None:
+    def test_all_resources_already_managed_are_allowed(self) -> None:
         del self.plan["resource_changes"][0]["change"]["importing"]
-        self.plan["resource_changes"][1]["change"]["actions"] = ["no-op"]
+        for resource in self.plan["resource_changes"]:
+            resource["change"].pop("importing", None)
+            resource["change"]["actions"] = ["no-op"]
         check_plan(self.plan)
 
-    def test_mutations_are_rejected(self) -> None:
+    def test_bucket_mutations_are_rejected(self) -> None:
         for actions in (["create"], ["update"], ["delete"], ["delete", "create"], ["read"]):
             with self.subTest(actions=actions):
                 self.plan["resource_changes"][0]["change"]["actions"] = actions
                 with self.assertRaises(ValueError):
                     check_plan(self.plan)
 
-    def test_missing_extra_or_unrelated_resources_are_rejected(self) -> None:
+    def test_missing_extra_duplicate_or_unrelated_resources_are_rejected(self) -> None:
         for changes in (
-            [], self.plan["resource_changes"][:1], self.plan["resource_changes"] * 2,
-            [self.plan["resource_changes"][0]] * 2,
-            [self.plan["resource_changes"][0], {
-                **self.plan["resource_changes"][1], "address": "module.cloudrun.service",
+            [], self.plan["resource_changes"][:2], self.plan["resource_changes"] * 2,
+            [self.plan["resource_changes"][0]] * 3,
+            [*self.plan["resource_changes"][:2], {
+                **self.plan["resource_changes"][2], "address": "module.cloudrun.service",
             }],
         ):
-            with self.subTest(changes=changes):
-                plan = {**self.plan, "resource_changes": changes}
-                with self.assertRaises(ValueError):
-                    check_plan(plan)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                check_plan({**self.plan, "resource_changes": changes})
 
     def test_wrong_bucket_or_import_id_is_rejected(self) -> None:
         for key in ("after", "importing"):
@@ -89,21 +117,23 @@ class InfrastructurePlanTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_plan(self.plan)
 
-    def test_secret_updates_deletion_replacement_and_import_are_rejected(self) -> None:
-        for actions in (["update"], ["delete"], ["delete", "create"], ["read"]):
-            with self.subTest(actions=actions):
-                plan = copy.deepcopy(self.plan)
-                plan["resource_changes"][1]["change"]["actions"] = actions
-                with self.assertRaises(ValueError):
-                    check_plan(plan)
-        self.plan["resource_changes"][1]["change"]["importing"] = {"id": "historicguide-secrets"}
-        with self.assertRaises(ValueError):
-            check_plan(self.plan)
+    def test_secret_and_registry_mutations_and_imports_are_rejected(self) -> None:
+        for index in (1, 2):
+            for actions in (["update"], ["delete"], ["delete", "create"], ["read"]):
+                with self.subTest(index=index, actions=actions):
+                    plan = copy.deepcopy(self.plan)
+                    plan["resource_changes"][index]["change"].pop("importing", None)
+                    plan["resource_changes"][index]["change"]["actions"] = actions
+                    with self.assertRaises(ValueError):
+                        check_plan(plan)
+            plan = copy.deepcopy(self.plan)
+            plan["resource_changes"][index]["change"]["importing"] = {"id": "existing"}
+            with self.assertRaises(ValueError):
+                check_plan(plan)
 
     def test_wrong_secret_identity_or_replication_is_rejected(self) -> None:
         for fields in (
-            {"secret_id": "other-app"},
-            {"project": "other-project"},
+            {"secret_id": "other-app"}, {"project": "other-project"},
             {"replication": []},
             {"replication": [{"auto": [], "user_managed": [{}]}]},
             {"replication": [{"auto": [{}], "user_managed": [{}]}]},
@@ -116,8 +146,7 @@ class InfrastructurePlanTests(unittest.TestCase):
 
     def test_secret_versions_iam_and_regional_resources_are_rejected(self) -> None:
         for resource_type in (
-            "google_secret_manager_secret_version",
-            "google_secret_manager_secret_iam_member",
+            "google_secret_manager_secret_version", "google_secret_manager_secret_iam_member",
             "google_secret_manager_regional_secret",
         ):
             with self.subTest(resource_type=resource_type):
@@ -131,6 +160,53 @@ class InfrastructurePlanTests(unittest.TestCase):
             with self.subTest(fields=fields):
                 plan = copy.deepcopy(self.plan)
                 plan["resource_changes"][1].update(fields)
+                with self.assertRaises(ValueError):
+                    check_plan(plan)
+
+    def test_wrong_registry_identity_or_dry_run_is_rejected(self) -> None:
+        for fields in (
+            {"project": "other-project"}, {"location": "us-central1"},
+            {"repository_id": "portfolio-repo"}, {"format": "NPM"},
+            {"mode": "REMOTE_REPOSITORY"},
+            {"cleanup_policy_dry_run": True},
+        ):
+            with self.subTest(fields=fields):
+                plan = copy.deepcopy(self.plan)
+                plan["resource_changes"][2]["change"]["after"].update(fields)
+                with self.assertRaises(ValueError):
+                    check_plan(plan)
+
+    def test_registry_import_cannot_change_other_metadata_or_create_repository(self) -> None:
+        plan = copy.deepcopy(self.plan)
+        plan["resource_changes"][2]["change"]["after"]["description"] = "Unrelated change"
+        with self.assertRaises(ValueError):
+            check_plan(plan)
+        plan = copy.deepcopy(self.plan)
+        plan["resource_changes"][2]["change"]["actions"] = ["create"]
+        with self.assertRaises(ValueError):
+            check_plan(plan)
+
+    def test_retention_must_be_two_total_in_the_application_package(self) -> None:
+        for fields in ({"keep_count": 3}, {"package_name_prefixes": ["other-app"]}):
+            with self.subTest(fields=fields):
+                plan = copy.deepcopy(self.plan)
+                plan["resource_changes"][2]["change"]["after"]["cleanup_policies"][0]["most_recent_versions"][0].update(fields)
+                with self.assertRaises(ValueError):
+                    check_plan(plan)
+        for policies in ([], self.plan["resource_changes"][2]["change"]["after"]["cleanup_policies"][:1]):
+            plan = copy.deepcopy(self.plan)
+            plan["resource_changes"][2]["change"]["after"]["cleanup_policies"] = policies
+            with self.assertRaises(ValueError):
+                check_plan(plan)
+
+    def test_cleanup_delete_scope_cannot_be_broadened(self) -> None:
+        for fields in (
+            {"package_name_prefixes": []}, {"tag_state": "TAGGED"},
+            {"older_than": "86400s"}, {"tag_prefixes": ["old"]},
+        ):
+            with self.subTest(fields=fields):
+                plan = copy.deepcopy(self.plan)
+                plan["resource_changes"][2]["change"]["after"]["cleanup_policies"][1]["condition"][0].update(fields)
                 with self.assertRaises(ValueError):
                     check_plan(plan)
 

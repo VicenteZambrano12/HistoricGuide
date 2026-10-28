@@ -12,3 +12,8 @@ output "secret_name" {
   description = "Global Secret Manager resource; this stage creates no versions."
   value       = module.secrets.secret_name
 }
+
+output "artifact_registry_image" {
+  description = "Application image base; workflow tags it by commit and resolves its digest."
+  value       = "${var.region}-docker.pkg.dev/${var.project_id}/${module.artifact_registry.repository_id}/historicguide"
+}
