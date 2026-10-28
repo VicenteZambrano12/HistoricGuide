@@ -1,5 +1,17 @@
 .env
 
+# Service-account keys
+config/*.json
+gha-creds-*.json
+
+# Terraform working files and saved plans (keep .terraform.lock.hcl)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+
 # Python / FastAPI
 __pycache__/
 *.py[cod]

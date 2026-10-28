@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import yaml
+from src.utils.general.cloud import prompt_text
 
 from .dataclasses.OrchestratorPrompt import OrchestratorPrompt
 
@@ -11,5 +12,4 @@ PROMPT_PATH = (
 
 
 def load_prompt() -> OrchestratorPrompt:
-    with PROMPT_PATH.open(encoding="utf-8") as stream:
-        return OrchestratorPrompt.model_validate(yaml.safe_load(stream))
+    return OrchestratorPrompt.model_validate(yaml.safe_load(prompt_text(PROMPT_PATH)))

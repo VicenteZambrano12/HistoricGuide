@@ -1,11 +1,31 @@
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+
+from fastapi import FastAPI, Request
+from fastapi.responses import PlainTextResponse
 
 from src.api.Endpoint.chat import router as chat_router
 from src.api.Endpoint.documents import router as documents_router
 from src.api.Endpoint.health import router as health_router
+from src.utils.logger import Logger
+from src.utils.logger.middleware import RequestLoggingMiddleware
+
+
+logger = Logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    Logger.configure()
+    logger.info("Backend started", extra={"event": "application.started"})
+    try:
+        yield
+    finally:
+        logger.info("Backend stopped", extra={"event": "application.stopped"})
 
 
 app = FastAPI(
+    lifespan=lifespan,
     title="HistoricGuide API",
     summary="Multilingual historical guidance and speech for Rome tours.",
     version="0.1.0",
@@ -62,6 +82,17 @@ See each operation for its applicable responses and examples.
         },
     ],
 )
+app.add_middleware(RequestLoggingMiddleware)
+
+
+@app.exception_handler(Exception)
+async def server_error(request: Request, error: Exception) -> PlainTextResponse:
+    return PlainTextResponse(
+        "Internal Server Error", status_code=500,
+        headers={"X-Request-ID": request.state.request_id},
+    )
+
+
 app.include_router(health_router)
 app.include_router(chat_router)
 app.include_router(documents_router)

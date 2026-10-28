@@ -8,6 +8,7 @@ import sqlite3
 
 from src.utils.AgentSystem.Orchestrator.dataclasses.types import Category
 from src.utils.general.GeminiApiCall import GeminiClient
+from src.utils.general.cloud import environment
 from src.utils.general.sources import PdfSource, report_sources
 
 
@@ -41,6 +42,10 @@ def retrieve_chunks(
     database_path: Path = DEFAULT_DATABASE_PATH,
 ) -> list[str]:
     """Return the two closest chunks (or one if only one matches); errors propagate."""
+    if environment() == "GCP":
+        from .retrieve_qdrant import retrieve_qdrant
+
+        return retrieve_qdrant(client, stop, category, user_query=user_query)
     chunk_type = "restaurants" if category == "restaurant" else "historic"
     with closing(sqlite3.connect(database_path.resolve().as_uri() + "?mode=ro", uri=True)) as connection:
         connection.row_factory = sqlite3.Row

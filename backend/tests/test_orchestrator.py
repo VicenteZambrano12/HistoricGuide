@@ -141,14 +141,16 @@ class OrchestratorTests(unittest.TestCase):
         with self.assertRaises(HTTPError):
             self.orchestrator.route("Pantheon", user_query="History?")
 
-    @patch(f"{UTILS}.load_prompt.PROMPT_PATH")
     @patch("src.utils.general.GeminiApiCall.urlopen")
-    def test_invalid_prompt_config_fails_before_api_call(self, urlopen, prompt_path) -> None:
-        for content in ("system_prompt: ''", "unexpected: value", "[]"):
-            with self.subTest(content=content):
-                prompt_path.open.return_value.__enter__.return_value = BytesIO(content.encode())
-                with self.assertRaises(ValidationError):
-                    self.orchestrator.route("Pantheon", user_query="History?")
+    def test_invalid_prompt_config_fails_before_api_call(self, urlopen) -> None:
+        with TemporaryDirectory() as directory:
+            prompt_file = Path(directory) / "prompt.yaml"
+            with patch(f"{UTILS}.load_prompt.PROMPT_PATH", prompt_file):
+                for content in ("system_prompt: ''", "unexpected: value", "[]"):
+                    with self.subTest(content=content):
+                        prompt_file.write_text(content, encoding="utf-8")
+                        with self.assertRaises(ValidationError):
+                            self.orchestrator.route("Pantheon", user_query="History?")
         urlopen.assert_not_called()
 
     @patch("src.utils.general.GeminiApiCall.urlopen")

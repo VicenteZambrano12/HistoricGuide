@@ -88,7 +88,183 @@ uv run --with pypdf --with tiktoken --with python-dotenv \
   python -m unittest discover -s database/tests
 ```
 
+## Migrate the snapshot to Qdrant
+
+The migration script copies the existing SQLite embeddings without calling
+Gemini, rebuilding the corpus, or modifying the source database:
+
+```sh
+uv run scripts/migrate_to_qdrant.py --dry-run
+uv run scripts/migrate_to_qdrant.py --url http://127.0.0.1:6333
+```
+
+The URL must reach Qdrant on the existing Compute Engine VM (`qdrant-vm`;
+Terraform module name `qdrant_vm`). For a private VM, establish an authorized
+tunnel first and use its localhost URL. The script does not create, start,
+reconfigure, or expose the VM. Do not expose port 6333 publicly for migration.
+Infrastructure and IAM setup are separate steps.
+
+Alternatively set `QDRANT_URL`; if Qdrant requires authentication, supply
+`QDRANT_API_KEY` through the environment, not a command-line argument.
+Neither Google service-account JSON keys nor a Gemini API key are needed by
+the migration script itself. Network/tunnel access may require Google credentials.
+The script does not load `.env` automatically.
+
+The default collection is **`historic_guide`**, using unnamed cosine vectors
+with the dimensions stored in SQLite. Each chunk has top-level payload fields
+`stop_id` (the existing API key, e.g. `Torre_Argentina`) and `type` (unchanged:
+`historic` or `restaurants`), both with keyword indexes. Payloads also preserve
+`stop`, text, original chunk ID, source PDF path, page, chunk index, token count,
+embedding model and dimensions, so citations and model compatibility remain
+available. Use the same embedding model with `RETRIEVAL_QUERY` for queries.
+
+The script validates the entire snapshot before contacting Qdrant, uploads
+batches with deterministic UUIDs, waits for completion, reads back every point
+to verify its payload and cosine-normalized vector, then checks the exact
+collection count. Reruns safely resume a partial upload of the **same snapshot**
+without duplicates. An incompatible collection or any unrelated/changed payload
+is rejected before writes; no collection or point is deleted, and the basic RAG
+app's other collections are untouched. Do not run concurrent writers against
+this dedicated collection during migration. Failures exit nonzero and may leave
+completed batches in place; rerun after resolving the error.
+
+Optional arguments: `--database PATH`, `--collection NAME`, `--batch-size 32`.
+`--dry-run` validates locally only. This step does not switch backend retrieval
+from SQLite to Qdrant or deploy any infrastructure.
+
+Run the offline migration tests (in-memory Qdrant, no cloud/API calls):
+
+```sh
+uv run --with 'qdrant-client>=1.12,<2' \
+  python -m unittest discover -s scripts/tests -p test_migrate_to_qdrant.py
+```
+
+## Migrate documents and prompts to Cloud Storage
+
+Preview the upload plan without credentials or cloud requests:
+
+```sh
+uv run scripts/migrate_bucket.py --dry-run
+```
+
+The script targets the existing bucket `historic-guide` and preserves relative
+paths: PDFs from `database/docs/` become `docs/<stop>/<type>/<filename>.pdf`;
+YAML files from `backend/src/config/prompts/` become `prompts/<filename>.yaml`.
+Only PDF and YAML files are included; empty sources/files and symlinks fail
+explicitly. The current corpus contains 10 PDFs and 3 prompts.
+
+When upload is approved and the bucket exists:
+
+```sh
+uv run scripts/migrate_bucket.py --bucket historic-guide
+```
+
+Authentication uses Application Default Credentials, including
+`GOOGLE_APPLICATION_CREDENTIALS` when set. Alternatively pass
+`--credentials /path/to/local-service-account-key.json` for the
+`historicguide@basicrahgapp.iam.gserviceaccount.com` account. Never commit or
+print the JSON key. Active `gcloud` CLI login alone does not necessarily
+provide Application Default Credentials for the Python client.
+
+The account needs bucket/object read access and object create/update access
+(for example, bucket-scoped `roles/storage.objectUser` plus
+`storage.buckets.get`). Grant only the required access in a separately approved
+permissions step. The script does not create buckets, modify IAM, or change
+Terraform; bucket provisioning/configuration remains Terraform-only.
+The existing Terraform storage example names a different bucket,
+`basicrahgapp-rag-data`; this script does not rename or reconfigure it.
+
+Uploads verify CRC32C checksums, byte sizes and content types. Identical objects
+are skipped; changed objects at the same path are updated using generation
+preconditions to prevent overwriting concurrent changes. Unrelated or deleted
+local files are never deleted remotely. Failures exit nonzero; completed
+uploads remain and rerunning resumes safely. This is not an atomic multi-file
+deployment; do not modify sources during migration.
+
+Optional arguments: `--project` (default `basicrahgapp`), `--docs-dir`,
+`--prompts-dir`, `--bucket`, `--credentials`, and `--dry-run`.
+This script does not switch the backend to Cloud Storage.
+
+Run the offline bucket tests (mocked storage, no cloud access):
+
+```sh
+uv run --with 'google-cloud-storage>=3,<4' --with 'google-crc32c>=1.5,<2' \
+  python -m unittest discover -s scripts/tests -p test_migrate_bucket.py
+```
+
 ## Backend API
+
+### Local or GCP data sources
+
+Set `ENV=LOCAL` or `ENV=GCP` in the root `.env` or process environment,
+then restart the backend. Process environment values take precedence. If `ENV`
+is absent, `LOCAL` preserves the previous behavior. Other values fail explicitly.
+
+| Mode | Prompts | Retrieval | Source PDFs |
+| --- | --- | --- | --- |
+| `LOCAL` | Local YAML files | Existing SQLite snapshot | Local document corpus |
+| `GCP` | `gs://historic-guide/prompts/` | Qdrant `historic_guide` | `gs://historic-guide/docs/` |
+
+Example GCP settings for running on your laptop through the private VM tunnel:
+
+```dotenv
+ENV=GCP
+GCS_BUCKET=historic-guide
+GOOGLE_CLOUD_PROJECT=basicrahgapp
+GOOGLE_APPLICATION_CREDENTIALS=config/your-service-account-key.json
+QDRANT_HOST=localhost
+QDRANT_PORT=6333
+QDRANT_COLLECTION=historic_guide
+EMBEDDING_MODEL=gemini-embedding-001
+```
+
+`QDRANT_URL`, when provided, takes precedence over `QDRANT_HOST`/`QDRANT_PORT`.
+`QDRANT_API_KEY` is optional if the instance requires authentication.
+On GCP, use the VM's reachable **private address** instead of `localhost`;
+localhost is valid on your laptop only while the SSH/IAP tunnel is active.
+The backend does not open tunnels or start the VM.
+
+For the existing `qdrant-vm`, once it is running, open a separate terminal:
+
+```sh
+gcloud compute start-iap-tunnel qdrant-vm 6333 \
+  --project=basicrahgapp --zone=europe-southwest1-a \
+  --local-host-port=localhost:6333
+```
+
+Keep the tunnel open while using the backend. The tunnel uses your authorized
+gcloud identity, not the backend's JSON key. It requires IAP tunnel access and
+Compute instance discovery permissions; Qdrant authentication still uses
+`QDRANT_API_KEY`. A stopped VM cannot serve requests through this tunnel.
+Starting or reconfiguring infrastructure remains a separate Terraform task.
+
+Use the existing service-account key only for local development; relative
+credential paths resolve from the repository root, not the current directory.
+On GCP omit `GOOGLE_APPLICATION_CREDENTIALS` and use the attached runtime
+service account through Application Default Credentials, with bucket read
+permissions and private network access to Qdrant. Never commit a key.
+`GEMINI_API_KEY` and the existing model settings are still required.
+
+The runtime service account `historicguide@basicrahgapp.iam.gserviceaccount.com`
+only needs `roles/storage.objectViewer` on `historic-guide`, conditioned on
+objects under `docs/` and `prompts/`. It does not need project-wide Storage
+roles, bucket administration, object writes, or service-account token creation:
+PDFs are proxied by the backend, not exposed through signed URLs. Migration
+writes require separately authorized permissions; runtime read access is not
+sufficient to rerun the bucket migration.
+
+GCP mode retains stop/type filtering, the top two cosine matches, model/dimension
+validation, PDF citations, inline PDF responses and HTTP byte-range support.
+Prompts use the same YAML/Pydantic validation. Cloud failures propagate and
+never silently fall back to local data. The Qdrant collection must already have
+been migrated; selecting GCP does not populate it. No infrastructure is changed.
+
+Offline regression tests (no cloud or Gemini requests):
+
+```sh
+ENV=LOCAL uv run --project backend --locked \
+  python -m unittest discover -s backend/tests
+```
 
 From the repository root:
 
@@ -107,6 +283,34 @@ Use `src.app:app` with `--app-dir backend`, not `app:app` with
 so its parent directory must be on the Python import path.
 Alternatively, from inside `backend`, run
 `uv run --locked uvicorn src.app:app --reload`.
+
+### Backend logging
+
+The shared `Logger` in `backend/src/utils/logger/Logger.py` uses standard Python
+logging and configures one application-only stdout handler at startup. JSON is
+the default, suitable for Cloud Run/Cloud Logging. Set process environment
+variables `LOG_LEVEL=DEBUG|INFO|WARNING|ERROR|CRITICAL` (default `INFO`) and
+`LOG_FORMAT=json|text` (default `json`); invalid values fail startup.
+Root and third-party handlers are not changed. For a single application access
+log without Uvicorn's additional access line, add `--no-access-log` to its command.
+Uvicorn still owns server/process diagnostics.
+
+Logs include UTC timestamps, severity, event names, and request IDs. Requests
+record method, route template, status, and elapsed milliseconds, including stream
+delivery time; 4xx responses use WARNING and 5xx/failures use ERROR. Unmatched URLs
+are recorded as `<unmatched>`, not raw paths. Send a UUID in `X-Request-ID` to
+reuse it, or let the server generate one; responses return that header, including
+500 errors. Context is preserved through sync handlers and streaming workers,
+then reset between requests. A streamed processing failure emits a separate
+`chat.stream.failed` error even though its HTTP headers already report 200.
+Pipeline start/completion events use INFO and operational stages use DEBUG.
+
+Use `Logger(__name__)` and standard `info`, `debug`, or `exception` methods;
+pass operational metadata through `extra`. Only the documented operational
+fields are serialized. Never put secrets, prompts, questions, generated text,
+audio, or document content in log messages. Exception logs include their type
+and stack frame locations, but omit exception messages, source lines, and local
+variables because provider errors can contain credentials or user data.
 
 `GET http://127.0.0.1:8000/health` returns HTTP 200 with `{"status":"ok"}`.
 This is a liveness check; it does not contact external services.

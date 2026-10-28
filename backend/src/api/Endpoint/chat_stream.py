@@ -2,8 +2,8 @@
 
 import base64
 from collections.abc import Callable, Iterator
+from contextvars import copy_context
 import json
-import logging
 from queue import Queue
 from threading import Event, Thread
 
@@ -11,11 +11,14 @@ from fastapi.responses import StreamingResponse
 
 from src.utils.general.progress import ProgressStep, progress_reporting, report_progress
 from src.utils.general.sources import collecting_sources
+from src.utils.logger import Logger
 
-logger = logging.getLogger(__name__)
+logger = Logger(__name__)
 
 
 def stream_chat(run: Callable[[], str | bytes], *, audio_output: bool) -> StreamingResponse:
+    context = copy_context()
+
     def events() -> Iterator[str]:
         queue: Queue[dict[str, object]] = Queue()
         disconnected = Event()
@@ -44,12 +47,14 @@ def stream_chat(run: Callable[[], str | bytes], *, audio_output: bool) -> Stream
                     event["sources"] = [source.model_dump() for source in sources]
             except Exception:
                 # Headers have already been sent; failures must be explicit stream events.
-                logger.exception("Streaming chat pipeline failed")
+                logger.exception(
+                    "Streaming chat pipeline failed", extra={"event": "chat.stream.failed"},
+                )
                 event = {"type": "error", "detail": "Guide processing failed. Please try again."}
             if not disconnected.is_set():
                 queue.put(event)
 
-        Thread(target=worker, daemon=True).start()
+        Thread(target=context.run, args=(worker,), daemon=True).start()
         try:
             while True:
                 event = queue.get()

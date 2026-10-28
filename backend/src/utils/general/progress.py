@@ -5,6 +5,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Literal
 
+from src.utils.logger import Logger
+
+logger = Logger(__name__)
+
 ProgressStep = Literal["starting", "transcribing", "routing", "retrieving", "generating", "synthesizing"]
 _reporter: ContextVar[Callable[[ProgressStep], None] | None] = ContextVar(
     "progress_reporter", default=None,
@@ -12,6 +16,7 @@ _reporter: ContextVar[Callable[[ProgressStep], None] | None] = ContextVar(
 
 
 def report_progress(step: ProgressStep) -> None:
+    logger.debug("Pipeline stage", extra={"event": "pipeline.stage", "stage": step})
     reporter = _reporter.get()
     if reporter is not None:
         reporter(step)
