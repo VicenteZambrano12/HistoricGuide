@@ -84,13 +84,13 @@ MAX_AUDIO_BYTES = 14_000_000
             }}},
         },
         status.HTTP_500_INTERNAL_SERVER_ERROR: {
+            "model": HTTPErrorResponse,
             "description": (
                 "An unhandled pipeline, upstream service, or server failure occurred. "
                 "No successful answer is returned."
             ),
-            "content": {"text/plain": {
-                "schema": {"type": "string"},
-                "example": "Internal Server Error",
+            "content": {"application/json": {
+                "example": {"detail": "Internal Server Error"},
             }},
         },
     },
@@ -157,6 +157,29 @@ def chat(
     Processing failures after streaming begins produce an explicit `error` event.
     Invalid input is rejected before the pipeline is constructed; unhandled
     pipeline failures propagate as server errors.
+
+    Args:
+        query (str | UploadFile): Question text or uploaded audio, according to mode.
+        mode (Literal["stt", "tts", "full", "text"]): Input/output processing mode.
+        language (Literal["ES", "EN"]): Requested answer language.
+        stop (str): Nonblank tour-stop name used for retrieval.
+        request_type (Literal["historic", "restaurant"] | None): Optional explicit
+            topic; defaults to None for automatic classification.
+        stream (bool): Whether to return NDJSON progress and a terminal event;
+            defaults to False.
+
+    Returns:
+        ChatResponse | Response: Answer and sources as JSON, WAV bytes with source
+        headers, or a StreamingResponse carrying NDJSON events.
+
+    Raises:
+        HTTPException: Input is incompatible with its mode (422) or audio exceeds
+            MAX_AUDIO_BYTES (413).
+        TypeError: A non-streaming pipeline result has the wrong output type.
+        pydantic.ValidationError: Internal pipeline inputs or output fail validation.
+        ValueError: Required service configuration or retrieval data is invalid.
+        RuntimeError: Generation or retrieval returns unusable results.
+        OSError: Uploaded audio or an external dependency cannot be read.
     """
     mime_type = None
     data: str | bytes
@@ -166,6 +189,7 @@ def chat(
         mime_type = query.content_type
         if mime_type is None or not mime_type.startswith("audio/"):
             raise HTTPException(422, "The query file must have an audio MIME type.")
+        # A one-byte sentinel detects oversized uploads without reading the full body.
         data = query.file.read(MAX_AUDIO_BYTES + 1)
         if not data:
             raise HTTPException(422, "The audio file must not be empty.")
@@ -177,6 +201,20 @@ def chat(
         data = query
 
     def run_pipeline() -> str | bytes:
+        """Bind validated HTTP inputs to one reusable pipeline invocation.
+
+        Args:
+            None.
+
+        Returns:
+            str | bytes: Generated text or synthesized WAV bytes.
+
+        Raises:
+            pydantic.ValidationError: Pipeline input is invalid.
+            ValueError: Configuration or retrieval data is invalid.
+            RuntimeError: A provider or retrieval result is unusable.
+            OSError: A required local or remote resource cannot be read.
+        """
         return Pipeline().run(
             data,
             PIPELINE_MODES[mode],
@@ -188,6 +226,7 @@ def chat(
 
     if stream:
         return stream_chat(run_pipeline, audio_output=mode in ("tts", "full"))
+    # Provenance travels beside the result without changing the pipeline's return type.
     with collecting_sources() as sources:
         result = run_pipeline()
     if mode in ("tts", "full"):

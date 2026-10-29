@@ -3,9 +3,11 @@ import { ChatIcon } from '../ChatIcon/ChatIcon';
 import './VoiceOrb.css';
 
 export function VoiceOrb() {
-  const { isSpeaking, isWalking, tourPhase, isChatPending, isVoiceRecording, t } = useTour();
+  const { isSpeaking, isWalking, tourPhase, isChatPending, isVoiceRecording, demoState, t } = useTour();
 
   const getStatusLabel = () => {
+    if (demoState.status === 'error') return t('demoUnavailable');
+    if (demoState.status !== 'ready') return t('demoStarting');
     if (isWalking) return t('guideWalking');
     if (isVoiceRecording) return t('guideRecording');
     if (isChatPending) return t('guideWaiting');

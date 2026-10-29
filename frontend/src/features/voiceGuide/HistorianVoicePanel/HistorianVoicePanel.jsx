@@ -8,7 +8,10 @@ import './HistorianVoicePanel.css';
 const WAVE_HEIGHTS = [10, 18, 12, 26, 34, 20, 14, 30, 22, 38, 28, 16, 24, 34, 18, 10, 22, 30, 40, 26, 16, 28, 36, 20, 12, 24, 32, 18, 26, 14, 20, 10];
 
 export function HistorianVoicePanel() {
-  const { messages, isChatPending, chatProgress, chatError, chatSessionId, t, resolveMessage } = useTour();
+  const {
+    messages, isChatPending, chatProgress, chatError, chatSessionId,
+    demoState, ensureDemoReady, t, resolveMessage
+  } = useTour();
   const transcriptRef = useRef(null);
 
   useEffect(() => {
@@ -28,6 +31,20 @@ export function HistorianVoicePanel() {
           <p>{t('guideDescription')}</p>
         </div>
       </header>
+      {demoState.status !== 'ready' && (
+        <div className="voice-panel__startup">
+          <p role={demoState.status === 'error' ? 'alert' : 'status'}>
+            {demoState.status === 'error'
+              ? t(`demoError_${demoState.reason}`)
+              : t('demoStarting')}
+          </p>
+          {demoState.status === 'error' && (
+            <button type="button" onClick={() => { void ensureDemoReady(); }}>
+              {t('demoRetry')}
+            </button>
+          )}
+        </div>
+      )}
       <div className="voice-panel__transcript" ref={transcriptRef} role="log" aria-label={t('conversation')} aria-relevant="additions" tabIndex={0}>
         {messages.length === 0 && (
           <div className="voice-panel__empty">

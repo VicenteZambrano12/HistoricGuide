@@ -3,6 +3,7 @@ import { ROME_STOPS } from '../lib/romeStopsData';
 import { buildRagTelemetry } from '../lib/ragEngine';
 import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis';
 import { useGpsSimulation } from '../hooks/useGpsSimulation';
+import { useDemoAvailability } from '../hooks/useDemoAvailability';
 import { sendChatRequest } from '../lib/api';
 import { TRANSLATIONS, getTranslator, getSavedLanguage, saveLanguage } from '../i18n/translations';
 import { getErrorContext, logger } from '../lib/logger.js';
@@ -40,6 +41,7 @@ export function TourProvider({ children }) {
   const [chatError, setChatError] = useState(null);
   const [chatSessionId, setChatSessionId] = useState(0);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+  const { demoState, isDemoReady, ensureDemoReady } = useDemoAvailability();
 
   useEffect(() => () => chatRequest.current?.abort(), []);
 
@@ -120,6 +122,7 @@ export function TourProvider({ children }) {
     );
 
     try {
+      if (!await ensureDemoReady() || controller.signal.aborted) return false;
       const result = await sendChatRequest({
         stop,
         requestType,
@@ -158,7 +161,7 @@ export function TourProvider({ children }) {
         setChatProgress([]);
       }
     }
-  }, [currentStop, appendMessage, audioEnabled, stopSpeech, language, t]);
+  }, [currentStop, appendMessage, audioEnabled, stopSpeech, language, t, ensureDemoReady]);
 
   const approachRef = useRef(null);
   useEffect(() => {
@@ -281,6 +284,9 @@ export function TourProvider({ children }) {
         messages,
         sendChat,
         isChatPending,
+        demoState,
+        isDemoReady,
+        ensureDemoReady,
         chatProgress,
         chatSources,
         chatError,

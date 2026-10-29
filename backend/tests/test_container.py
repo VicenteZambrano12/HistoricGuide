@@ -42,6 +42,14 @@ class ContainerTests(unittest.TestCase):
         self.assertEqual(schema.status_code, 200)
         self.assertIn("/chat", schema.json()["paths"])
 
+    @patch.dict(os.environ, ENV="LOCAL")
+    def test_demo_start_and_readiness_are_available_under_api(self) -> None:
+        for response in (
+            self.client.get("/api/demo/ready"), self.client.post("/api/demo/start"),
+        ):
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"status": "ready", "reason": None, "retryable": False})
+
     @patch("src.api.Endpoint.chat.Pipeline")
     def test_frontend_chat_request_reaches_existing_pipeline(self, pipeline) -> None:
         pipeline.return_value.run.return_value = "An answer."

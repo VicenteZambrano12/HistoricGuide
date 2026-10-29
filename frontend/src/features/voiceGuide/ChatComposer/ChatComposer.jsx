@@ -5,13 +5,13 @@ import { ActionPromptChips } from '../ActionPromptChips/ActionPromptChips';
 import { ChatIcon } from '../../../components/ChatIcon/ChatIcon';
 
 export function ChatComposer() {
-  const { sendChat, isChatPending, isWalking, setIsVoiceRecording, stopSpeech, t } = useTour();
+  const { sendChat, isChatPending, isDemoReady, isWalking, setIsVoiceRecording, stopSpeech, t } = useTour();
   const [query, setQuery] = useState('');
   const recorder = useVoiceRecorder((audio) => {
     void sendChat({ query: audio, mode: 'full' });
   }, setIsVoiceRecording);
   const recordingActive = recorder.status !== 'idle';
-  const disabled = isChatPending || isWalking;
+  const disabled = isChatPending || !isDemoReady || isWalking;
 
   const handleSubmit = async (event) => {
     event.preventDefault();

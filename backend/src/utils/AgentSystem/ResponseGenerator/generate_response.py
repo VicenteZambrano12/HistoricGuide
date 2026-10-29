@@ -23,6 +23,30 @@ def generate_response(
     context: list[str] | None = None,
     language: Language = "en",
 ) -> str:
+    """Retrieve supporting excerpts and generate a validated, language-specific answer.
+
+    Args:
+        generator (ResponseGenerator): Service retaining its provider client and database path.
+        stop (str): Nonblank tour-stop name.
+        category (Literal["historic", "restaurant"]): Corpus and prompt topic.
+        user_query (str | None): Optional question; None requests an introduction.
+        context (list[str] | None): Optional nonblank caller-provided supporting text.
+        language (Literal["en", "es"]): Answer language; defaults to "en".
+
+    Returns:
+        str: Nonblank generated answer with surrounding whitespace removed.
+
+    Raises:
+        pydantic.ValidationError: Request, prompt, provenance, or answer is invalid.
+        ValueError: Configuration is invalid or no matching chunks exist.
+        RuntimeError: Retrieval metadata, vectors, or generation output are unusable.
+        OSError: Local resources or provider connections cannot be accessed.
+        sqlite3.Error: Local retrieval fails.
+        yaml.YAMLError: The generation prompt cannot be parsed.
+        google.api_core.exceptions.GoogleAPIError: Cloud prompt retrieval fails.
+        qdrant_client.http.exceptions.UnexpectedResponse: Qdrant rejects retrieval.
+        qdrant_client.http.exceptions.ResponseHandlingException: Qdrant transport fails.
+    """
     request = GenerationRequest(
         stop=stop,
         category=category,
@@ -41,6 +65,7 @@ def generate_response(
         user_query=request.user_query,
         database_path=generator.database_path,
     )
+    # Ground the serialized generation request in both supplied and retrieved evidence.
     request.context.extend(chunks)
     report_progress("generating")
     text = generator.client.generate(

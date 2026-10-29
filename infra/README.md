@@ -319,11 +319,35 @@ The first Cloud Run merge rebuilds the image because the existing published
 image predates JSON-secret support. It is pushed and digest-resolved by the same
 workflow before planning; no local Docker installation is necessary.
 
-**Runtime prerequisite:** `qdrant-vm` was verified **TERMINATED** during this
-preparation and has not been started. The `historic_guide` collection was absent
-at the earlier check and needs rechecking when the VM is available. This step
-does not start the VM or migrate its data. `/api/health` is process liveness:
-successful frontend/health checks do not prove chat or Qdrant readiness.
+### On-demand Qdrant startup and existing idle shutdown
+
+HistoricGuide reuses the public `start-qdrant-vm` function at
+`https://start-qdrant-vm-ksvn4nelea-no.a.run.app`, owned by BasicRAGapp's
+infrastructure. No new resource, IAM grant, state import, or GitHub setting is
+needed. Do not copy its Terraform resources into this state or edit the VM's
+Terraform-owned startup metadata from this repository.
+
+Opening the tour, explicitly retrying startup, or sending a new chat performs
+bounded readiness checking. `/api/demo/start` proxies the existing function;
+`/api/demo/ready` checks Qdrant and a populated, compatible `historic_guide`
+collection, closes its connections, and never starts the VM. Startup retries
+tolerate concurrent callers and stopping/starting transitions. After three
+minutes the UI stops and offers a manual retry. Missing/empty collections and
+incompatible embedding settings are explicit failures, not readiness.
+
+The shared watchdog remains unchanged: a cron job samples established TCP 6333
+connections every five minutes, resets its counter when connections exist, and
+shuts down after thirty counted idle minutes. Brief requests can fall between
+samples; this is not exact request-idle tracking. HistoricGuide does not send
+periodic heartbeats after readiness, so an open idle tab does not keep the VM up.
+Later chat requests recheck and wake it again if needed. Other demos' Qdrant
+connections contribute to the same existing watchdog.
+
+The VM was last inspected **TERMINATED** and the collection was absent at the
+earlier check. Startup does not create/migrate the collection: populate it
+separately before chat can work. `/api/health` stays process liveness; Cloud Run
+probes and deployment frontend/health checks never start Qdrant.
+In `ENV=LOCAL`, demo preparation makes no cloud calls.
 
 ## 2. Configure GitHub before merging
 
