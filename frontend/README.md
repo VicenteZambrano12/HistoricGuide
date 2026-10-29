@@ -64,6 +64,17 @@ errors are logged to the browser console. Reload the page to check again.
 Availability only confirms API liveness, not chat or external-service readiness.
 Walking and GPS remain simulated.
 
+The tour also prepares its document service through same-origin
+`GET /api/demo/ready` and `POST /api/demo/start`. In GCP mode the backend reuses the
+existing public Qdrant VM starter. The guide panel shows a translated startup or
+failure message and retry button; message, microphone, arrival, and suggested
+question controls wait for readiness. Preparation stops after three minutes and
+never continues polling after success. Each new chat rechecks readiness to handle
+the shared VM shutting down while the page is idle. No background heartbeat or
+new infrastructure is introduced, preserving its existing idle shutdown.
+In LOCAL mode these endpoints are immediately ready without cloud access.
+Collection/configuration errors are shown rather than silently sending chat.
+
 The map scales to show all five stops and explicitly labels the walk and
 position as simulated. It is an illustrated route, not street navigation.
 The current-stop panel sits below the

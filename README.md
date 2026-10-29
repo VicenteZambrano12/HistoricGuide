@@ -242,8 +242,28 @@ source configuration described below. The existing Terraform workflow now
 publishes/resolves an immutable image digest before planning the public
 `historicguide-backend` service. Deployment still requires reviewing and approving
 the saved plan in `prod`; see the [Cloud Run migration guide](infra/README.md).
-The service reuses the private Qdrant network, but does not start the VM or
-migrate its collection. Healthy HTTP endpoints do not establish chat readiness.
+The service reuses the private Qdrant network and the existing public
+`start-qdrant-vm` function; it does not create lifecycle infrastructure or migrate
+the collection. Healthy HTTP endpoints do not establish chat readiness.
+
+Opening the tour checks `/api/demo/ready` and requests `POST /api/demo/start`
+when Qdrant is unreachable. The guide panel shows startup progress, disables chat
+until the collection is ready, and offers a retry after failure. Preparation is
+limited to three minutes; checks run every five seconds only while preparing,
+with at least fifteen seconds between starter calls. Concurrent start conflicts
+are retried without creating another VM. A running VM alone is not readiness:
+the configured collection must contain compatible cosine embeddings.
+
+Each user chat request rechecks readiness, so the same page can wake the VM
+again after it shuts down while idle. There are no ongoing heartbeats after
+readiness. The existing VM cron watchdog is unchanged: it checks established
+TCP 6333 connections every five minutes and shuts down after thirty counted idle
+minutes. This is connection sampling, not exact request-idle tracking; brief
+requests between samples can be missed. Other demos share the same VM and timer.
+`/api/health`, Cloud Run probes, and deployment smoke tests never start it.
+In `ENV=LOCAL`, both demo endpoints return ready without cloud calls.
+Missing/empty collections or mismatched embeddings are explicit errors requiring
+the demo owner to populate/fix the collection; startup never uploads data.
 
 ### Local or GCP data sources
 
@@ -337,31 +357,60 @@ Alternatively, from inside `backend`, run
 
 ### Backend logging
 
-The shared `Logger` in `backend/src/utils/logger/Logger.py` uses standard Python
+The shared `Logger` in `backend/src/utils/logger/logger.py` uses standard Python
 logging and configures one application-only stdout handler at startup. JSON is
 the default, suitable for Cloud Run/Cloud Logging. Set process environment
 variables `LOG_LEVEL=DEBUG|INFO|WARNING|ERROR|CRITICAL` (default `INFO`) and
-`LOG_FORMAT=json|text` (default `json`); invalid values fail startup.
+`LOG_FORMAT=json|text` (default `json`); invalid values fail startup. These
+settings use the shared configuration precedence: process environment,
+`APP_SECRETS_JSON`, root `.env`, then defaults.
 Root and third-party handlers are not changed. For a single application access
 log without Uvicorn's additional access line, add `--no-access-log` to its command.
 Uvicorn still owns server/process diagnostics.
 
-Logs include UTC timestamps, severity, event names, and request IDs. Requests
-record method, route template, status, and elapsed milliseconds, including stream
-delivery time; 4xx responses use WARNING and 5xx/failures use ERROR. Unmatched URLs
-are recorded as `<unmatched>`, not raw paths. Send a UUID in `X-Request-ID` to
+Logs include UTC timestamps, severity/level, logger and module names, event names,
+and `correlation_id` (also emitted as `request_id` for compatibility). Each request
+emits `request.started` and a terminal `request.completed`, `request.failed`, or
+`request.interrupted` event. They record method, URL path (without query strings),
+client IP, route template, response status, and elapsed milliseconds, including
+stream delivery and background-task time. Status and duration appear on terminal
+events only. 4xx responses use WARNING and 5xx/failures use ERROR. Cancellation
+before response headers uses status 499; after headers, the actual status is
+preserved. Client IP comes from the ASGI connection, not untrusted forwarding
+headers; configure Uvicorn's trusted proxies for your deployment.
+The combined Cloud Run app logs frontend and mounted API requests once each.
+Send a UUID in `X-Request-ID` to
 reuse it, or let the server generate one; responses return that header, including
 500 errors. Context is preserved through sync handlers and streaming workers,
 then reset between requests. A streamed processing failure emits a separate
 `chat.stream.failed` error even though its HTTP headers already report 200.
 Pipeline start/completion events use INFO and operational stages use DEBUG.
 
-Use `Logger(__name__)` and standard `info`, `debug`, or `exception` methods;
-pass operational metadata through `extra`. Only the documented operational
+Use `Logger(__name__)` and standard `info`, `debug`, `warning`, or `exception`
+methods; pass operational metadata through `extra`. No ID argument is needed:
+the shared `ContextVar` automatically enriches logs throughout the request.
+For explicitly created threads, use `copy_context().run` (as the streaming worker
+does); `asyncio.to_thread` and FastAPI's sync handlers propagate context already.
+Context does not cross process or network boundaries: forward `X-Request-ID`
+explicitly to cooperating downstream services when adding outbound HTTP calls.
+
+```python
+from src.utils.logger import Logger
+
+logger = Logger(__name__)
+logger.info("Retrieval completed", extra={"event": "retrieval.completed"})
+```
+
+Only the documented operational
 fields are serialized. Never put secrets, prompts, questions, generated text,
-audio, or document content in log messages. Exception logs include their type
-and stack frame locations, but omit exception messages, source lines, and local
-variables because provider errors can contain credentials or user data.
+audio, or document content in log messages. URL paths are now logged, so do not
+put sensitive values in path segments. Query strings, request bodies, and headers
+are not logged. Global exception logs include their type and all stack frame
+locations, including chained exceptions, but omit exception messages, source
+lines, and local variables because provider errors can contain credentials or
+user data. The global handler emits one `request.exception` traceback even for
+mounted API failures; the separate `request.failed` event is its access record.
+Already-started streaming responses cannot be replaced with a JSON 500.
 
 `GET http://127.0.0.1:8000/health` returns HTTP 200 with `{"status":"ok"}`.
 This is a liveness check; it does not contact external services.
@@ -373,7 +422,8 @@ The current endpoints require no client authentication. `GEMINI_API_KEY` is
 server-side configuration, not a client credential.
 HTTP errors use a JSON `detail` string; automatic request validation uses a
 `detail` array of validation issues. Unhandled server failures return HTTP 500
-with plain text `Internal Server Error` in the default non-debug configuration.
+with sanitized JSON `{"detail":"Internal Server Error"}` and an `X-Request-ID`
+header in the default non-debug configuration.
 The route lives in `backend/src/api/Endpoint/health.py`, with its Pydantic
 response model in `backend/src/api/DataClass/health.py`.
 

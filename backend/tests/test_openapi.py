@@ -26,7 +26,7 @@ class OpenAPITests(unittest.TestCase):
         self.assertIn("no client authentication", info["description"])
         self.assertEqual(
             {tag["name"] for tag in self.schema["tags"]},
-            {"chat", "health"},
+            {"chat", "health", "demo"},
         )
         for tag in self.schema["tags"]:
             self.assertTrue(tag["description"])
@@ -52,9 +52,9 @@ class OpenAPITests(unittest.TestCase):
                 self.assertNotIn("401", responses)
                 self.assertNotIn("403", responses)
                 failure = responses["500"]["content"]
-                self.assertEqual(set(failure), {"text/plain"})
+                self.assertEqual(set(failure), {"application/json"})
                 self.assertEqual(
-                    failure["text/plain"]["example"], "Internal Server Error",
+                    failure["application/json"]["example"], {"detail": "Internal Server Error"},
                 )
         content = self.schema["paths"]["/chat"]["post"]["responses"]["200"]["content"]
         self.assertEqual(
@@ -142,9 +142,9 @@ class OpenAPITests(unittest.TestCase):
             with patch("src.api.Endpoint.chat.Pipeline", side_effect=RuntimeError("Offline")):
                 failed = client.post("/chat", data={**data, "stop": "Pantheon"})
             self.assertEqual(failed.status_code, 500)
-            self.assertEqual(failed.headers["content-type"], "text/plain; charset=utf-8")
+            self.assertEqual(failed.headers["content-type"], "application/json")
             self.assertEqual(
-                failed.text, responses["500"]["content"]["text/plain"]["example"],
+                failed.json(), responses["500"]["content"]["application/json"]["example"],
             )
 
             unknown = client.get("/unknown")

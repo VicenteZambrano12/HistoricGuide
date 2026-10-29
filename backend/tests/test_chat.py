@@ -173,7 +173,7 @@ class ChatTests(unittest.TestCase):
 
     def test_stream_failure_is_logged_and_never_returns_a_result(self) -> None:
         self.pipeline.run.side_effect = RuntimeError("private provider detail")
-        with self.assertLogs("src.api.Endpoint.chat_stream", level="ERROR") as logs:
+        with self.assertLogs("historicguide.src.api.Endpoint.chat_stream", level="ERROR") as logs:
             response = self.client.post("/chat", data={
                 "query": "Question", "mode": "text", "language": "EN",
                 "stop": "Pantheon", "stream": "true",
@@ -181,7 +181,8 @@ class ChatTests(unittest.TestCase):
         events = [json.loads(line) for line in response.iter_lines()]
         self.assertEqual(events[-1]["type"], "error")
         self.assertNotIn("private provider detail", response.text)
-        self.assertIn("private provider detail", "\n".join(logs.output))
+        self.assertEqual(getattr(logs.records[0], "event"), "chat.stream.failed")
+        self.assertEqual(logs.records[0].levelname, "ERROR")
         self.assertFalse(any(event["type"] == "result" for event in events))
 
     def test_pdf_references_are_delivered_in_every_mode_with_and_without_streaming(self) -> None:

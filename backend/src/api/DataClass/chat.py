@@ -9,7 +9,18 @@ ChatLanguage = Literal["ES", "EN"]
 
 
 class ChatResponse(BaseModel):
-    """Deliver the guide's answer for text and speech-to-text chat modes."""
+    """Deliver an answer and its PDF provenance for text-output modes.
+
+    Args:
+        text (str): Generated answer in the requested language.
+        sources (list[PdfSource]): PDF references; defaults to a new empty list.
+
+    Returns:
+        ChatResponse: Validated text-output response.
+
+    Raises:
+        pydantic.ValidationError: A required field is missing or has an invalid type.
+    """
 
     model_config = ConfigDict(json_schema_extra={
         "example": {
@@ -18,6 +29,7 @@ class ChatResponse(BaseModel):
         },
     })
 
+    # Answer text is required; this schema imposes no minimum string length.
     text: str = Field(
         ...,
         description=(
@@ -26,6 +38,7 @@ class ChatResponse(BaseModel):
         ),
         examples=["The Pantheon's dome has an open oculus that lights the interior."],
     )
+    # Each response owns its reference list; nested references validate page numbers.
     sources: list[PdfSource] = Field(
         default_factory=list,
         description="Retrieved PDF references with one-based page numbers.",

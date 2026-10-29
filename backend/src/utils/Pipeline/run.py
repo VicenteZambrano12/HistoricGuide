@@ -30,6 +30,33 @@ def run(
     language: Language = "en",
     request_type: Category | None = None,
 ) -> str | bytes:
+    """Execute the validated speech/text workflow and record pipeline timing.
+
+    Args:
+        pipeline (Pipeline): Component container; speech clients are created only as needed.
+        data (str | Path | bytes): Question text, audio file path, or audio bytes.
+        mode (Literal["STT", "TTS", "full", "only text"]): Processing mode.
+        stop (str): Nonblank tour-stop name for routing and retrieval.
+        mime_type (str | None): Optional audio MIME type; required for audio bytes.
+        voice (str): Speech voice identifier; defaults to "Kore".
+        context (list[str] | None): Optional additional nonblank context.
+        language (Literal["en", "es"]): Answer language; defaults to "en".
+        request_type (Literal["historic", "restaurant"] | None): Explicit topic;
+            defaults to None for classification.
+
+    Returns:
+        str | bytes: Generated text for text-output modes or WAV bytes for speech output.
+
+    Raises:
+        pydantic.ValidationError: Inputs violate field or mode-specific constraints.
+        TypeError: Transcription does not yield text.
+        ValueError: Configuration is invalid or no matching chunks exist.
+        RuntimeError: Retrieval, generation, or audio output is unusable.
+        OSError: A required file or provider connection cannot be accessed.
+        sqlite3.Error: Local retrieval fails.
+        yaml.YAMLError: Prompt configuration cannot be parsed.
+        google.api_core.exceptions.GoogleAPIError: A cloud dependency fails.
+    """
     request = PipelineRequest(
         data=data,
         mode=mode,
@@ -48,11 +75,13 @@ def run(
     query = request.data
     if request.mode in ("STT", "full"):
         report_progress("transcribing")
+        # Text-only requests must not initialize an unused transcription dependency.
         if pipeline.stt is None:
             pipeline.stt = STT()
         query = pipeline.stt.transcribe(request.data, mime_type=request.mime_type)
     if not isinstance(query, str):
         raise TypeError("The agent pipeline requires a text query.")
+    # Speech and text modes share the same grounded answer-generation path.
     answer = pipeline.agent_pipeline.run(
         request.stop, user_query=query, param=request.request_type,
         context=request.context, language=request.language

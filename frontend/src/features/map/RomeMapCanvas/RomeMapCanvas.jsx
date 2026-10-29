@@ -11,6 +11,7 @@ export function RomeMapCanvas() {
     gpsPosition,
     isWalking,
     isChatPending,
+    isDemoReady,
     isVoiceRecording,
     walkProgress,
     walkToStopIndex,
@@ -204,7 +205,7 @@ export function RomeMapCanvas() {
           <button
             type="button"
             className="rome-map__arrive-btn"
-            disabled={isWalking || isChatPending || isVoiceRecording}
+            disabled={isWalking || isChatPending || isVoiceRecording || !isDemoReady}
             onClick={confirmArrivalAtStop}
           >
             {t(tourPhase === 'READY_TO_ARRIVE' ? 'arrivalButton' : 'replayArrival')}

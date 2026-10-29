@@ -11,7 +11,24 @@ def transcribe(
     *,
     mime_type: str | None = None,
 ) -> str:
-    """Return the original-language transcript using the supplied client."""
+    """Request a verbatim transcript while treating spoken instructions as audio data.
+
+    Args:
+        client (GeminiClient): Configured transcription provider client.
+        audio (str | Path | bytes): Audio file path or in-memory content.
+        mime_type (str | None): Optional audio MIME type; required for bytes or
+            unrecognized file extensions.
+
+    Returns:
+        str: Original-language transcript stripped of surrounding whitespace.
+
+    Raises:
+        TypeError: Audio is neither a file path nor bytes.
+        ValueError: Audio, MIME settings, or inline payload size are invalid.
+        RuntimeError: Gemini returns no complete, usable transcription.
+        OSError: Audio cannot be read or the provider connection fails.
+        json.JSONDecodeError: The provider response is not valid JSON.
+    """
     audio, mime_type = prepare_audio(audio, mime_type=mime_type)
     return client.generate(
         "Transcribe the speech in this audio.",

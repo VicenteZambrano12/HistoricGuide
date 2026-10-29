@@ -51,6 +51,25 @@
   color: var(--text-muted);
 }
 
+.voice-panel__startup {
+  padding: 0.85rem 1rem;
+  border-left: 3px solid var(--gold-primary);
+  background: var(--bg-card);
+  color: var(--text-marble);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.voice-panel__startup button {
+  margin-top: 0.65rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  color: var(--text-marble);
+  cursor: pointer;
+}
+
 .voice-panel__empty > .chat-icon {
   width: 32px;
   height: 32px;

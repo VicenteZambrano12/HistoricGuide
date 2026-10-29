@@ -9,23 +9,57 @@ from src.utils.general.sources import PdfSource, report_sources
 from .retrieve_chunks import _unit_vector
 
 
-def qdrant_client() -> QdrantClient:
+def qdrant_client(*, timeout: float = 60) -> QdrantClient:
+    """Construct a Qdrant client using URL-first shared configuration.
+
+    Args:
+        timeout (float): Request timeout in seconds; defaults to 60.
+
+    Returns:
+        QdrantClient: Client configured with an optional API key and either
+        QDRANT_URL or QDRANT_HOST/QDRANT_PORT; the caller owns its lifecycle.
+
+    Raises:
+        ValueError: Endpoint, port, or shared JSON configuration is invalid.
+        OSError: Shared configuration cannot be read.
+    """
     url = _configuration_value("QDRANT_URL").strip()
     api_key = _configuration_value("QDRANT_API_KEY").strip() or None
     if url:
-        return QdrantClient(url=url, api_key=api_key, timeout=60)
+        return QdrantClient(url=url, api_key=api_key, timeout=timeout)
     host = _configuration_value("QDRANT_HOST").strip()
     if not host:
         raise ValueError("Set QDRANT_URL or QDRANT_HOST for ENV=GCP.")
     port = int(_configuration_value("QDRANT_PORT", "6333"))
     if not 1 <= port <= 65535:
         raise ValueError("QDRANT_PORT must be between 1 and 65535.")
-    return QdrantClient(host=host, port=port, api_key=api_key, timeout=60)
+    return QdrantClient(host=host, port=port, api_key=api_key, timeout=timeout)
 
 
 def retrieve_qdrant(
     client: GeminiClient, stop: str, category: Category, *, user_query: str | None,
 ) -> list[str]:
+    """Retrieve compatible, stop/topic-filtered excerpts from the Qdrant collection.
+
+    Args:
+        client (GeminiClient): Query embedding client matching migrated corpus metadata.
+        stop (str): Exact stop identifier stored in payloads.
+        category (Literal["historic", "restaurant"]): Topic selecting the chunk type.
+        user_query (str | None): Search question, or None for a category introduction.
+
+    Returns:
+        list[str]: Up to two nearest excerpt texts, with PDF references reported
+        to the active provenance collector.
+
+    Raises:
+        ValueError: Configuration is invalid or the stop/topic filter matches no chunks.
+        RuntimeError: Collection vectors, embedding metadata, or returned points are incompatible.
+        pydantic.ValidationError: Returned provenance fields are invalid.
+        OSError: Configuration or the embedding provider connection cannot be accessed.
+        json.JSONDecodeError: The embedding provider response is not valid JSON.
+        qdrant_client.http.exceptions.UnexpectedResponse: Qdrant rejects a request.
+        qdrant_client.http.exceptions.ResponseHandlingException: Qdrant transport fails.
+    """
     collection = _configuration_value("QDRANT_COLLECTION", "historic_guide").strip()
     if not collection:
         raise ValueError("QDRANT_COLLECTION must not be empty.")
@@ -43,6 +77,7 @@ def retrieve_qdrant(
         dimensions = vectors.size
         offset = None
         found = False
+        # Validate all matching metadata, not just nearest hits, to detect mixed migrations.
         while True:
             records, offset = remote.scroll(
                 collection, scroll_filter=filters, limit=100, offset=offset,
@@ -70,6 +105,7 @@ def retrieve_qdrant(
         if len(embeddings) != 1:
             raise RuntimeError("Expected exactly one query embedding.")
         query_vector = _unit_vector(embeddings[0], dimensions)
+        # Apply the same corpus filter during ranking to preserve routing boundaries.
         points = remote.query_points(
             collection, query=query_vector, query_filter=filters,
             limit=2, with_payload=True, with_vectors=True,
