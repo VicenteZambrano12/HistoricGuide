@@ -42,6 +42,19 @@ module "cloudrun" {
   secret_id             = module.secrets.secret_id
   serverless_subnet_id  = "projects/${var.project_id}/regions/${var.region}/subnetworks/serverless-egress-subnet"
   qdrant_internal_ip    = "10.0.1.2"
+  environment           = var.environment
+}
+
+module "logging" {
+  source                = "../../modules/logging"
+  project_id            = var.project_id
+  region                = var.region
+  environment           = var.environment
+  service_name          = "historicguide-backend"
+  bucket_id             = var.log_bucket_id
+  retention_days        = var.log_retention_days
+  error_threshold_count = var.log_error_threshold_count
+  notification_channels = var.log_notification_channels
 }
 
 import {

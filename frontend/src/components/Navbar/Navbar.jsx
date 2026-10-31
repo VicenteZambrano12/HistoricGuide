@@ -6,9 +6,6 @@ export function Navbar({ theme, onToggleTheme }) {
   const {
     audioEnabled,
     toggleAudio,
-    isChatPending,
-    isWalking,
-    isVoiceRecording,
     resetTour,
     language,
     toggleLanguage,
@@ -58,7 +55,6 @@ export function Navbar({ theme, onToggleTheme }) {
           className={`navbar__btn ${audioEnabled ? 'navbar__btn--audio-on' : ''}`}
           onClick={toggleAudio}
           aria-pressed={audioEnabled}
-          disabled={isChatPending || isWalking || isVoiceRecording}
         >
           <ChatIcon name={audioEnabled ? 'volume' : 'muted'} />
           {t(audioEnabled ? 'voiceOn' : 'voiceOff')}

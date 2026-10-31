@@ -291,6 +291,10 @@ EMBEDDING_MODEL=gemini-embedding-001
 
 `QDRANT_URL`, when provided, takes precedence over `QDRANT_HOST`/`QDRANT_PORT`.
 `QDRANT_API_KEY` is optional if the instance requires authentication.
+Host/port connections explicitly use HTTP, matching the private Qdrant VM and
+IAP tunnel, even when an API key is set. For a TLS-enabled endpoint, configure
+`QDRANT_URL=https://your-qdrant-host:6333` instead. Keep HTTP connections on the
+private network or authorized tunnel; never expose them publicly.
 On GCP, use the VM's reachable **private address** instead of `localhost`;
 localhost is valid on your laptop only while the SSH/IAP tunnel is active.
 The backend does not open tunnels or start the VM.
@@ -308,6 +312,12 @@ gcloud identity, not the backend's JSON key. It requires IAP tunnel access and
 Compute instance discovery permissions; Qdrant authentication still uses
 `QDRANT_API_KEY`. A stopped VM cannot serve requests through this tunnel.
 Starting or reconfiguring infrastructure remains a separate Terraform task.
+
+If the frontend loads but chat stays disabled, check `/api/demo/ready`, not
+just `/api/health`: `{"status":"waiting","reason":"unreachable","retryable":true}`
+means the backend cannot reach Qdrant. For local GCP mode, confirm the tunnel is
+running and `curl http://localhost:6333/healthz` succeeds. A healthy `/api/health`
+confirms the frontend/backend connection, not document-service readiness.
 
 Use the existing service-account key only for local development; relative
 credential paths resolve from the repository root, not the current directory.
@@ -379,6 +389,16 @@ before response headers uses status 499; after headers, the actual status is
 preserved. Client IP comes from the ASGI connection, not untrusted forwarding
 headers; configure Uvicorn's trusted proxies for your deployment.
 The combined Cloud Run app logs frontend and mounted API requests once each.
+The [Terraform logging module](infra/modules/logging/main.tf) routes this
+service's structured container logs and Cloud Run's automatic frontend/API access
+logs to a private regional bucket with 30-day retention. Its service-only
+`_Default` exclusion prevents duplicate new storage without changing other apps.
+Cloud Run captures stdout/stderr without a Logging API permission on the runtime
+account. An error-entry counter and five-in-five-minutes Monitoring policy are
+provisioned; notification channels default to empty (console incidents only).
+Browser-console logs are not uploaded by this infrastructure. See the
+[observability guide](infra/README.md#1g-centralized-private-logs-and-error-monitoring)
+for retention variables, IAM boundaries, and separate dev/prod state guidance.
 Send a UUID in `X-Request-ID` to
 reuse it, or let the server generate one; responses return that header, including
 500 errors. Context is preserved through sync handlers and streaming workers,

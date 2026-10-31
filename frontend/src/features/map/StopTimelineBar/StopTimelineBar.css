@@ -26,8 +26,12 @@
   border-right: 0;
 }
 
-.stop-timeline__item:hover {
+.stop-timeline__item:hover:not(:disabled) {
   background: var(--bg-card);
+}
+
+.stop-timeline__item:disabled {
+  opacity: 0.5;
 }
 
 .stop-timeline__item:focus-visible {

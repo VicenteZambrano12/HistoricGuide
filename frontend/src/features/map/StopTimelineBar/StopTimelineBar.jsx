@@ -2,7 +2,7 @@ import { useTour } from '../../../store/TourContext';
 import './StopTimelineBar.css';
 
 export function StopTimelineBar() {
-  const { stops, currentStopIndex, walkToStopIndex, t } = useTour();
+  const { stops, currentStopIndex, walkToStopIndex, isInteractionBusy, t } = useTour();
   const routeRef = useRef(null);
 
   useEffect(() => {
@@ -24,6 +24,7 @@ export function StopTimelineBar() {
             type="button"
             className={`stop-timeline__item ${isActive ? 'stop-timeline__item--active' : ''}`}
             onClick={() => walkToStopIndex(idx)}
+            disabled={isInteractionBusy}
             aria-current={isActive ? 'step' : undefined}
           >
             <div className="stop-timeline__top">

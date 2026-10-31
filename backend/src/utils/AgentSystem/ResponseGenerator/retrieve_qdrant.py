@@ -17,7 +17,7 @@ def qdrant_client(*, timeout: float = 60) -> QdrantClient:
 
     Returns:
         QdrantClient: Client configured with an optional API key and either
-        QDRANT_URL or QDRANT_HOST/QDRANT_PORT; the caller owns its lifecycle.
+        QDRANT_URL or HTTP QDRANT_HOST/QDRANT_PORT; the caller owns its lifecycle.
 
     Raises:
         ValueError: Endpoint, port, or shared JSON configuration is invalid.
@@ -33,7 +33,7 @@ def qdrant_client(*, timeout: float = 60) -> QdrantClient:
     port = int(_configuration_value("QDRANT_PORT", "6333"))
     if not 1 <= port <= 65535:
         raise ValueError("QDRANT_PORT must be between 1 and 65535.")
-    return QdrantClient(host=host, port=port, api_key=api_key, timeout=timeout)
+    return QdrantClient(host=host, port=port, https=False, api_key=api_key, timeout=timeout)
 
 
 def retrieve_qdrant(

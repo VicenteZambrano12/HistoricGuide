@@ -9,7 +9,7 @@ function formatTime(seconds) {
   return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
 }
 
-export function AudioAnswer({ audio, autoPlay = false }) {
+export function AudioAnswer({ audio, autoPlay = false, isNarration = false }) {
   const playerRef = useRef(null);
   const [playbackError, setPlaybackError] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -17,12 +17,14 @@ export function AudioAnswer({ audio, autoPlay = false }) {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
-  const { stopSpeech, audioEnabled, isChatPending, isWalking, tourPhase, isVoiceRecording, language, t } = useTour();
+  const { stopSpeech, audioEnabled, isInteractionBusy, language, t } = useTour();
   const autoplayAttempted = useRef(false);
-  const playbackBlocked = isChatPending || isWalking || isVoiceRecording || tourPhase === 'TOUR_COMPLETED';
+  const playbackBlocked = isInteractionBusy;
+  const narrationBlocked = isNarration && !audioEnabled;
 
   useEffect(() => {
     const player = playerRef.current;
+    autoplayAttempted.current = false;
     const url = URL.createObjectURL(audio);
     player.src = url;
     return () => {
@@ -34,18 +36,19 @@ export function AudioAnswer({ audio, autoPlay = false }) {
   }, [audio]);
 
   useEffect(() => {
-    if (playbackBlocked || (autoPlay && !audioEnabled)) {
+    if (playbackBlocked || narrationBlocked) {
       playerRef.current.pause();
     }
-  }, [playbackBlocked, autoPlay, audioEnabled]);
+  }, [playbackBlocked, narrationBlocked]);
 
   useEffect(() => {
     playerRef.current.pause();
   }, [language]);
 
   useEffect(() => {
-    if (!autoPlay || !audioEnabled || playbackBlocked || autoplayAttempted.current) return;
+    if (!autoPlay || playbackBlocked || autoplayAttempted.current) return;
     autoplayAttempted.current = true;
+    if (narrationBlocked) return;
     let cancelled = false;
     playerRef.current.play().catch((error) => {
       if (!cancelled && error.name !== 'AbortError') {
@@ -54,9 +57,10 @@ export function AudioAnswer({ audio, autoPlay = false }) {
       }
     });
     return () => { cancelled = true; };
-  }, [autoPlay, audioEnabled, playbackBlocked, audio]);
+  }, [autoPlay, narrationBlocked, playbackBlocked, audio]);
 
   const togglePlayback = async () => {
+    if (playbackBlocked) return;
     const player = playerRef.current;
     if (!player.paused) {
       player.pause();
@@ -101,7 +105,7 @@ export function AudioAnswer({ audio, autoPlay = false }) {
         aria-label={t(isPlaying ? 'pauseAudio' : 'playAudio')}
         aria-pressed={isPlaying}
         onClick={togglePlayback}
-        disabled={isWalking || isVoiceRecording || tourPhase === 'TOUR_COMPLETED'}
+        disabled={playbackBlocked}
       >
         <span className="audio-answer__sphere" aria-hidden="true" />
         <span className="audio-answer__orb-icon"><ChatIcon name={isPlaying ? 'pause' : 'play'} /></span>
@@ -120,7 +124,7 @@ export function AudioAnswer({ audio, autoPlay = false }) {
             max={duration || 1}
             step="0.1"
             value={Math.min(currentTime, duration || 1)}
-            disabled={!duration}
+            disabled={isInteractionBusy || !duration}
             onChange={(event) => {
               const value = Number(event.target.value);
               playerRef.current.currentTime = value;
@@ -133,6 +137,7 @@ export function AudioAnswer({ audio, autoPlay = false }) {
           <button
             type="button"
             aria-label={t(muted || volume === 0 ? 'unmuteAudio' : 'muteAudio')}
+            disabled={isInteractionBusy}
             onClick={() => {
               const nextMuted = !(muted || volume === 0);
               playerRef.current.muted = nextMuted;
@@ -152,6 +157,7 @@ export function AudioAnswer({ audio, autoPlay = false }) {
             max="1"
             step="0.01"
             value={muted ? 0 : volume}
+            disabled={isInteractionBusy}
             onChange={(event) => {
               const value = Number(event.target.value);
               playerRef.current.volume = value;

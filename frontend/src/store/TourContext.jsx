@@ -51,7 +51,7 @@ export function TourProvider({ children }) {
     buildRagTelemetry(ROME_STOPS[0], 'OVERVIEW')
   );
 
-  const { audioEnabled, isSpeaking, stopSpeech, toggleAudio: toggleSpeechAudio } =
+  const { audioEnabled, isSpeaking, stopSpeech, toggleAudio } =
     useSpeechSynthesis(language);
 
   const {
@@ -63,7 +63,9 @@ export function TourProvider({ children }) {
     startWalkSimulation
   } = useGpsSimulation(ROME_STOPS[0].coords);
 
-  const appendMessage = useCallback((sender, text, tag = '', audio = null, autoPlay = false) => {
+  const isInteractionBusy = isChatPending || isWalking || isVoiceRecording;
+
+  const appendMessage = useCallback((sender, text, tag = '', audio = null, audioMode = null) => {
     const now = new Date().toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit'
@@ -75,7 +77,8 @@ export function TourProvider({ children }) {
         sender,
         tag,
         audio,
-        autoPlay,
+        autoPlay: Boolean(audio),
+        isNarration: audioMode === 'tts',
         timestamp: now,
         text
       }
@@ -138,7 +141,7 @@ export function TourProvider({ children }) {
       if (controller.signal.aborted) return false;
       setChatSources(result.sources ?? []);
       if (result.audio) {
-        appendMessage('Plinius', { key: 'audioAnswer' }, `BACKEND / ${language.toUpperCase()}`, result.audio, mode === 'tts');
+        appendMessage('Plinius', { key: 'audioAnswer' }, `BACKEND / ${language.toUpperCase()}`, result.audio, mode);
       } else {
         appendMessage('Plinius', result.text, `BACKEND / ${language.toUpperCase()}`);
       }
@@ -174,6 +177,7 @@ export function TourProvider({ children }) {
 
   const walkToStopIndex = useCallback(
     (targetIdx) => {
+      if (isInteractionBusy || chatRequest.current) return;
       if (targetIdx < 0 || targetIdx >= ROME_STOPS.length) return;
       const targetStop = stops[targetIdx];
       const fromCoords = gpsPosition || currentStop.coords;
@@ -194,11 +198,11 @@ export function TourProvider({ children }) {
         void approachRef.current(targetIdx);
       });
     },
-    [gpsPosition, currentStop, stopSpeech, appendMessage, startWalkSimulation, cancelChat, stops]
+    [gpsPosition, currentStop, stopSpeech, appendMessage, startWalkSimulation, cancelChat, stops, isInteractionBusy]
   );
 
   const confirmArrivalAtStop = useCallback(() => {
-    if (chatRequest.current || isWalking || isVoiceRecording) return;
+    if (isInteractionBusy || chatRequest.current) return;
     setGpsPosition(currentStop.coords);
     setTourPhase('ARRIVED_OVERVIEW');
     setRagTelemetry(buildRagTelemetry(currentStop, 'OVERVIEW'));
@@ -207,15 +211,10 @@ export function TourProvider({ children }) {
       query: t('arrivalQuery', { name: currentStop.name }),
       requestType: 'historic'
     });
-  }, [currentStop, setGpsPosition, sendChat, isWalking, isVoiceRecording, t]);
-
-  const toggleAudio = useCallback(() => {
-    if (chatRequest.current || isWalking || isVoiceRecording) return;
-    toggleSpeechAudio();
-  }, [toggleSpeechAudio, isWalking, isVoiceRecording]);
+  }, [currentStop, setGpsPosition, sendChat, isInteractionBusy, t]);
 
   const askHistoricalRag = useCallback(() => {
-    if (chatRequest.current) return;
+    if (isInteractionBusy || chatRequest.current) return;
     setTourPhase('HISTORICAL_RAG');
     setRagTelemetry(buildRagTelemetry(currentStop, 'HISTORICAL'));
 
@@ -223,10 +222,10 @@ export function TourProvider({ children }) {
       query: t('historyQuery'),
       requestType: 'historic'
     });
-  }, [currentStop, sendChat, t]);
+  }, [currentStop, sendChat, t, isInteractionBusy]);
 
   const askGastroRag = useCallback((query = t('foodQuery')) => {
-    if (chatRequest.current) return;
+    if (isInteractionBusy || chatRequest.current) return;
     setTourPhase('GASTRO_RAG');
     setRagTelemetry(buildRagTelemetry(currentStop, 'GASTRO'));
 
@@ -234,9 +233,10 @@ export function TourProvider({ children }) {
       query,
       requestType: 'restaurant'
     });
-  }, [currentStop, sendChat, t]);
+  }, [currentStop, sendChat, t, isInteractionBusy]);
 
   const advanceToNextStop = useCallback(() => {
+    if (isInteractionBusy || chatRequest.current) return;
     const nextIdx = currentStopIndex + 1;
     if (nextIdx < ROME_STOPS.length) {
       walkToStopIndex(nextIdx);
@@ -245,9 +245,10 @@ export function TourProvider({ children }) {
       setTourPhase('TOUR_COMPLETED');
       void sendChat({ query: t('farewellQuery'), requestType: 'historic' });
     }
-  }, [currentStopIndex, walkToStopIndex, cancelChat, sendChat, t]);
+  }, [currentStopIndex, walkToStopIndex, cancelChat, sendChat, t, isInteractionBusy]);
 
   const finishTour = useCallback(() => {
+    if (isInteractionBusy || chatRequest.current) return;
     cancelChat();
     cancelWalkSimulation();
     setTourPhase('TOUR_COMPLETED');
@@ -255,7 +256,7 @@ export function TourProvider({ children }) {
       query: t('finishQuery', { name: currentStop.name }),
       requestType: 'historic'
     });
-  }, [currentStop, sendChat, cancelChat, cancelWalkSimulation, t]);
+  }, [currentStop, sendChat, cancelChat, cancelWalkSimulation, t, isInteractionBusy]);
 
   const resetTour = useCallback(() => {
     cancelChat();
@@ -284,6 +285,7 @@ export function TourProvider({ children }) {
         messages,
         sendChat,
         isChatPending,
+        isInteractionBusy,
         demoState,
         isDemoReady,
         ensureDemoReady,

@@ -3,8 +3,8 @@ import { ChatIcon } from '../../../components/ChatIcon/ChatIcon';
 import './ActionPromptChips.css';
 
 export function ActionPromptChips({ disabled = false }) {
-  const { isWalking, isChatPending, isDemoReady, askHistoricalRag, askGastroRag, t } = useTour();
-  const unavailable = disabled || isWalking || isChatPending || !isDemoReady;
+  const { isInteractionBusy, askHistoricalRag, askGastroRag, t } = useTour();
+  const unavailable = disabled || isInteractionBusy;
 
   return (
     <div className="action-chips">

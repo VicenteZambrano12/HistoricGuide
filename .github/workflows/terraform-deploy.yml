@@ -81,7 +81,7 @@ jobs:
 
       - name: Terraform Format
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform fmt -check . ../../modules/storage ../../modules/secrets ../../modules/artifact_registry ../../modules/cloudrun
+        run: terraform fmt -check . ../../modules/storage ../../modules/secrets ../../modules/artifact_registry ../../modules/cloudrun ../../modules/logging
 
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}

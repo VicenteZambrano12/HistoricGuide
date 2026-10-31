@@ -4,6 +4,10 @@ resource "google_cloud_run_v2_service" "backend" {
   location            = var.region
   ingress             = "INGRESS_TRAFFIC_ALL"
   deletion_protection = false
+  labels = {
+    env         = var.environment
+    application = "historicguide"
+  }
 
   template {
     service_account = var.service_account_email

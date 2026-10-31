@@ -2,6 +2,11 @@ variable "project_id" {
   type = string
 }
 
+variable "environment" {
+  type        = string
+  description = "Deployment environment label."
+}
+
 variable "region" {
   type = string
 }

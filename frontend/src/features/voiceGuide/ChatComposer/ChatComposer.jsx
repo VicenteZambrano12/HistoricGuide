@@ -5,16 +5,17 @@ import { ActionPromptChips } from '../ActionPromptChips/ActionPromptChips';
 import { ChatIcon } from '../../../components/ChatIcon/ChatIcon';
 
 export function ChatComposer() {
-  const { sendChat, isChatPending, isDemoReady, isWalking, setIsVoiceRecording, stopSpeech, t } = useTour();
+  const { sendChat, isChatPending, isInteractionBusy, setIsVoiceRecording, stopSpeech, t } = useTour();
   const [query, setQuery] = useState('');
   const recorder = useVoiceRecorder((audio) => {
     void sendChat({ query: audio, mode: 'full' });
   }, setIsVoiceRecording);
   const recordingActive = recorder.status !== 'idle';
-  const disabled = isChatPending || !isDemoReady || isWalking;
+  const disabled = isInteractionBusy;
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (disabled || recordingActive) return;
     if (await sendChat({ query })) setQuery('');
   };
 
@@ -42,7 +43,8 @@ export function ChatComposer() {
             className={`chat-composer__microphone ${recorder.status === 'recording' ? 'chat-composer__recording' : ''}`}
             aria-label={t(recorder.status === 'recording' ? 'stopRecording' : 'recordVoice')}
             aria-pressed={recorder.status === 'recording'}
-            disabled={disabled || recorder.status === 'requesting' || recorder.status === 'stopping'}
+            disabled={(disabled && recorder.status !== 'recording')
+              || recorder.status === 'requesting' || recorder.status === 'stopping'}
             onClick={() => {
               if (recorder.status === 'recording') {
                 recorder.stop();
