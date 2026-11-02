@@ -1,5 +1,7 @@
 # Plinius, your tourist guide
 
+**Author:** Vicente Zambrano
+
 ## 1. Overview
 
 Plinius is an AI agent system that lets users converse with their guide through natural, real-time voice. Powered by Retrieval-Augmented Generation (RAG), it grounds every answer in curated knowledge, delivering accurate and relevant responses for this use case.
