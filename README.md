@@ -1,803 +1,599 @@
+# Plinius, your tourist guide
 
-## Generate the PDF corpus
+## 1. Overview
 
-From the repository root, install the PDF generator's dependencies with
-[uv](https://docs.astral.sh/uv/):
+Plinius is an AI agent system that lets users converse with their guide through natural, real-time voice. Powered by Retrieval-Augmented Generation (RAG), it grounds every answer in curated knowledge, delivering accurate and relevant responses for this use case.
 
-```sh
-uv sync --script database/scripts/doc_generation.py
-```
+Designed for visitors to Rome, Plinius serves as a tourist guide through the city's historic sites. It is named in honour of Pliny the Elder, the renowned Roman historian (yes, the author is a history geek too).
 
-Run the generator:
+## 2. Use Case and Business Value
 
-```sh
-uv run database/scripts/doc_generation.py
-```
+Organizations need answers they can trust, grounded in what users actually ask. Voice interaction increasingly strengthens that experience, but only when it can be governed with precision.
 
-The script declares its own `reportlab` and `pypdf` dependencies, which `uv run`
-also installs automatically if needed. It writes PDFs to `rag_corpus/` and
-`public/rag_corpus/`, relative to the current working directory, and prints a
-page-count verification table.
+Plinius provides an infrastructure that gives organizations control over both fronts:
 
-## Provisional RAG database
+- **Pipeline control:** how each layer works, namely Speech-to-Text (STT), the Large Language Model (LLM) and Text-to-Speech (TTS).
+- **Context control:** the specific context used within a real-time voice application.
+- **Source traceability:** users can consult the sources behind each answer.
 
-Place PDFs under `database/docs/<stop>/<type>/*.pdf`, then run from the repository
-root:
+## 3. Prerequisites and Installation Guide
 
-```sh
-uv run database/scripts/provisional_db_gen.py
-```
+This section describes the complete flow to run Plinius locally and to deploy it to the cloud.
 
-Set `GEMINI_API_KEY` and `EMBEDDING_MODEL` in the root `.env` or environment.
-The embedding model defaults to `gemini-embedding-001`; it is independent of
-`LLM_MODEL`. The builder uses the existing `GeminiClient`, batches requests with
-the `RETRIEVAL_DOCUMENT` task, and sends chunk text plus stop/type context to
-Gemini. API errors are surfaced, never replaced with fake vectors.
-Rate limits (HTTP 429) and temporary server errors receive up to three logged
-retries with exponential waits of at least 60, 120, and 240 seconds. Numeric
-`Retry-After` headers are respected; waits over 600 seconds fail explicitly.
-Unavailable models (HTTP 404) are not retried. If your configuration still uses
-the unavailable `text-embedding-004`, override it for a build without editing
-`.env`:
+### 3.1 Prerequisites
 
-```sh
-EMBEDDING_MODEL=gemini-embedding-001 uv run database/scripts/provisional_db_gen.py
-```
+| Tool | Purpose | Notes |
+| --- | --- | --- |
+| [uv](https://docs.astral.sh/uv/) | Python environment and dependency management | Backend requires Python 3.10 or later |
+| Node.js and npm | Frontend build and development server | The container image builds with Node 24 |
+| Gemini API key | LLM and embeddings | Google AI Studio key, held server-side only |
+| Docker | Container image build | Cloud deployment only |
+| Google Cloud account and `gcloud` CLI | Cloud Storage, Cloud Run, Secret Manager, Artifact Registry | Cloud deployment only |
+| Qdrant instance | Vector retrieval in cloud mode | Cloud deployment only |
 
-`ChunkGen` uses layout-aware PDF extraction to retain table rows, strips
-repeated page-edge headers/footers and page numbers, preserves
-Unicode, and prefers paragraph, line, sentence, then word boundaries. Defaults
-are at most 400 tokens with up to 60 tokens of word-aligned overlap. Chunks never
-cross PDF or page boundaries, preserving citations and page-level sections.
-Token counts use local `cl100k_base`, an approximation rather than Gemini's
-tokenizer; these conservative sizes leave room for metadata. Very long words
-are split at character boundaries. Scanned/empty pages require OCR and fail
-explicitly rather than disappearing from the corpus. The tokenizer data is
-downloaded on first use.
+### 3.2 Configuration
 
-The output is `database/provisional_db/chunks.sqlite3`. The `chunks` table stores
-text, `stop` and `type` (exact folder names, including `restaurants`), relative
-source path, 1-based page, 0-based per-document chunk index, token count, stable
-SHA-256 ID, embedding model, dimensions, and a JSON float-array `embedding`.
-An index supports filtering by `(stop, type)`; `build_info` records the model,
-chunking settings, corpus counts, and creation time. This is ordinary SQLite,
-not a vector-search extension. For retrieval, decode vectors with `json.loads`,
-embed queries with the same model and `task_type="RETRIEVAL_QUERY"`, and compare
-using cosine similarity after filtering by stop/type.
-
-Re-running rebuilds the entire snapshot (including removal of deleted sources)
-and atomically replaces the old file only after all embeddings and integrity
-checks succeed. Close readers before rebuilding to use the new snapshot.
-Generated databases are ignored by Git.
-
-Optional settings:
-
-```sh
-uv run database/scripts/provisional_db_gen.py \
-  --docs-dir database/docs \
-  --output database/provisional_db/chunks.sqlite3 \
-  --max-tokens 400 --overlap-tokens 60 --batch-size 32
-```
-
-Run the offline database and embedding-client tests (no API requests):
-
-```sh
-uv run --script database/scripts/provisional_db_gen.py --help
-uv run --with pypdf --with tiktoken --with python-dotenv \
-  python -m unittest discover -s database/tests
-```
-
-## Migrate the snapshot to Qdrant
-
-The migration script copies the existing SQLite embeddings without calling
-Gemini, rebuilding the corpus, or modifying the source database:
-
-```sh
-uv run scripts/migrate_to_qdrant.py --dry-run
-uv run scripts/migrate_to_qdrant.py --url http://127.0.0.1:6333
-```
-
-The URL must reach Qdrant on the existing Compute Engine VM (`qdrant-vm`;
-Terraform module name `qdrant_vm`). For a private VM, establish an authorized
-tunnel first and use its localhost URL. The script does not create, start,
-reconfigure, or expose the VM. Do not expose port 6333 publicly for migration.
-Infrastructure and IAM setup are separate steps.
-
-Alternatively set `QDRANT_URL`; if Qdrant requires authentication, supply
-`QDRANT_API_KEY` through the environment, not a command-line argument.
-Neither Google service-account JSON keys nor a Gemini API key are needed by
-the migration script itself. Network/tunnel access may require Google credentials.
-The script does not load `.env` automatically.
-
-The default collection is **`historic_guide`**, using unnamed cosine vectors
-with the dimensions stored in SQLite. Each chunk has top-level payload fields
-`stop_id` (the existing API key, e.g. `Torre_Argentina`) and `type` (unchanged:
-`historic` or `restaurants`), both with keyword indexes. Payloads also preserve
-`stop`, text, original chunk ID, source PDF path, page, chunk index, token count,
-embedding model and dimensions, so citations and model compatibility remain
-available. Use the same embedding model with `RETRIEVAL_QUERY` for queries.
-
-The script validates the entire snapshot before contacting Qdrant, uploads
-batches with deterministic UUIDs, waits for completion, reads back every point
-to verify its payload and cosine-normalized vector, then checks the exact
-collection count. Reruns safely resume a partial upload of the **same snapshot**
-without duplicates. An incompatible collection or any unrelated/changed payload
-is rejected before writes; no collection or point is deleted, and the basic RAG
-app's other collections are untouched. Do not run concurrent writers against
-this dedicated collection during migration. Failures exit nonzero and may leave
-completed batches in place; rerun after resolving the error.
-
-Optional arguments: `--database PATH`, `--collection NAME`, `--batch-size 32`.
-`--dry-run` validates locally only. This step does not switch backend retrieval
-from SQLite to Qdrant or deploy any infrastructure.
-
-Run the offline migration tests (in-memory Qdrant, no cloud/API calls):
-
-```sh
-uv run --with 'qdrant-client>=1.12,<2' \
-  python -m unittest discover -s scripts/tests -p test_migrate_to_qdrant.py
-```
-
-## Migrate documents and prompts to Cloud Storage
-
-Preview the upload plan without credentials or cloud requests:
-
-```sh
-uv run scripts/migrate_bucket.py --dry-run
-```
-
-The script targets the existing bucket `historic-guide` and preserves relative
-paths: PDFs from `database/docs/` become `docs/<stop>/<type>/<filename>.pdf`;
-YAML files from `backend/src/config/prompts/` become `prompts/<filename>.yaml`.
-Only PDF and YAML files are included; empty sources/files and symlinks fail
-explicitly. The current corpus contains 10 PDFs and 3 prompts.
-
-When upload is approved and the bucket exists:
-
-```sh
-uv run scripts/migrate_bucket.py --bucket historic-guide
-```
-
-Authentication uses Application Default Credentials, including
-`GOOGLE_APPLICATION_CREDENTIALS` when set. Alternatively pass
-`--credentials /path/to/local-service-account-key.json` for the
-`historicguide@basicrahgapp.iam.gserviceaccount.com` account. Never commit or
-print the JSON key. Active `gcloud` CLI login alone does not necessarily
-provide Application Default Credentials for the Python client.
-
-The account needs bucket/object read access and object create/update access
-(for example, bucket-scoped `roles/storage.objectUser` plus
-`storage.buckets.get`). Grant only the required access in a separately approved
-permissions step. The script does not create buckets, modify IAM, or change
-Terraform; bucket provisioning/configuration remains Terraform-only.
-The existing Terraform storage example names a different bucket,
-`basicrahgapp-rag-data`; this script does not rename or reconfigure it.
-
-Uploads verify CRC32C checksums, byte sizes and content types. Identical objects
-are skipped; changed objects at the same path are updated using generation
-preconditions to prevent overwriting concurrent changes. Unrelated or deleted
-local files are never deleted remotely. Failures exit nonzero; completed
-uploads remain and rerunning resumes safely. This is not an atomic multi-file
-deployment; do not modify sources during migration.
-
-Optional arguments: `--project` (default `basicrahgapp`), `--docs-dir`,
-`--prompts-dir`, `--bucket`, `--credentials`, and `--dry-run`.
-This script does not switch the backend to Cloud Storage.
-
-Run the offline bucket tests (mocked storage, no cloud access):
-
-```sh
-uv run --with 'google-cloud-storage>=3,<4' --with 'google-crc32c>=1.5,<2' \
-  python -m unittest discover -s scripts/tests -p test_migrate_bucket.py
-```
-
-## Backend API
-
-### Cloud Run container
-
-The root `Dockerfile` builds one image containing the React/Vite frontend and
-FastAPI backend, using `frontend/package-lock.json` and `backend/uv.lock`.
-It serves the frontend at `/`, API endpoints at `/api`, health at `/api/health`,
-and API documentation at `/api/docs`. The existing local backend entry point
-and its unprefixed routes are unchanged.
-
-Build from the repository root on a machine with Docker:
-
-```sh
-docker build --platform linux/amd64 -t historicguide:local .
-```
-
-The container defaults to `ENV=GCP`, listens on `0.0.0.0:${PORT:-8080}`, and
-runs one Uvicorn worker as a non-root user. Supply `GEMINI_API_KEY`,
-`GOOGLE_CLOUD_PROJECT`, `GCS_BUCKET`, `QDRANT_HOST`/`QDRANT_PORT` (or
-`QDRANT_URL`), and any required `QDRANT_API_KEY` through runtime configuration.
-Keep the embedding model consistent with the migrated collection.
-On Cloud Run, attach the runtime service account and use Application Default
-Credentials; do not set `GOOGLE_APPLICATION_CREDENTIALS` to a laptop path.
-The service receives the single `historicguide-secrets` JSON object through
-`APP_SECRETS_JSON`. Configuration precedence is process environment, JSON secret,
-root `.env`, then defaults. JSON values must be strings; malformed JSON fails
-container startup without printing its payload.
-
-The Docker build context excludes local `.env` files, service-account keys,
-Terraform files, local databases, dependency directories, and other files
-outside the application build inputs. No secrets are passed as build arguments.
-The image does not include the local PDF corpus or SQLite snapshot.
-Building the image does not push it, deploy Cloud Run, or change Terraform.
-
-Without Docker, validate the built frontend and combined application locally:
-
-```sh
-npm --prefix frontend run build
-ENV=LOCAL PYTHONPATH=backend uv run --project backend --locked \
-  python -m unittest backend.tests.test_container backend.tests.test_health \
-  backend.tests.test_documents
-uv run --project backend --locked uvicorn src.container:create_app \
-  --factory --app-dir backend --host 127.0.0.1 --port 8080 --no-access-log
-```
-
-The local combined server also serves `/api/health`; it needs the frontend
-build from the preceding command. Real chat requests still require the data
-source configuration described below. The existing Terraform workflow now
-publishes/resolves an immutable image digest before planning the public
-`historicguide-backend` service. Deployment still requires reviewing and approving
-the saved plan in `prod`; see the [Cloud Run migration guide](infra/README.md).
-The service reuses the private Qdrant network and the existing public
-`start-qdrant-vm` function; it does not create lifecycle infrastructure or migrate
-the collection. Healthy HTTP endpoints do not establish chat readiness.
-
-Opening the tour checks `/api/demo/ready` and requests `POST /api/demo/start`
-when Qdrant is unreachable. The guide panel shows startup progress, disables chat
-until the collection is ready, and offers a retry after failure. Preparation is
-limited to three minutes; checks run every five seconds only while preparing,
-with at least fifteen seconds between starter calls. Concurrent start conflicts
-are retried without creating another VM. A running VM alone is not readiness:
-the configured collection must contain compatible cosine embeddings.
-
-Each user chat request rechecks readiness, so the same page can wake the VM
-again after it shuts down while idle. There are no ongoing heartbeats after
-readiness. The existing VM cron watchdog is unchanged: it checks established
-TCP 6333 connections every five minutes and shuts down after thirty counted idle
-minutes. This is connection sampling, not exact request-idle tracking; brief
-requests between samples can be missed. Other demos share the same VM and timer.
-`/api/health`, Cloud Run probes, and deployment smoke tests never start it.
-In `ENV=LOCAL`, both demo endpoints return ready without cloud calls.
-Missing/empty collections or mismatched embeddings are explicit errors requiring
-the demo owner to populate/fix the collection; startup never uploads data.
-
-### Local or GCP data sources
-
-Set `ENV=LOCAL` or `ENV=GCP` in the root `.env` or process environment,
-then restart the backend. Process environment values take precedence. If `ENV`
-is absent, `LOCAL` preserves the previous behavior. Other values fail explicitly.
+The application runs in one of two modes, selected with the `ENV` variable:
 
 | Mode | Prompts | Retrieval | Source PDFs |
 | --- | --- | --- | --- |
-| `LOCAL` | Local YAML files | Existing SQLite snapshot | Local document corpus |
-| `GCP` | `gs://historic-guide/prompts/` | Qdrant `historic_guide` | `gs://historic-guide/docs/` |
+| `LOCAL` | Local YAML files | SQLite snapshot | Local document corpus |
+| `GCP` | Google Cloud Storage | Qdrant collection `historic_guide` | Google Cloud Storage |
 
-Example GCP settings for running on your laptop through the private VM tunnel:
-
-```dotenv
-ENV=GCP
-GCS_BUCKET=historic-guide
-GOOGLE_CLOUD_PROJECT=basicrahgapp
-GOOGLE_APPLICATION_CREDENTIALS=config/your-service-account-key.json
-QDRANT_HOST=localhost
-QDRANT_PORT=6333
-QDRANT_COLLECTION=historic_guide
-EMBEDDING_MODEL=gemini-embedding-001
-```
-
-`QDRANT_URL`, when provided, takes precedence over `QDRANT_HOST`/`QDRANT_PORT`.
-`QDRANT_API_KEY` is optional if the instance requires authentication.
-Host/port connections explicitly use HTTP, matching the private Qdrant VM and
-IAP tunnel, even when an API key is set. For a TLS-enabled endpoint, configure
-`QDRANT_URL=https://your-qdrant-host:6333` instead. Keep HTTP connections on the
-private network or authorized tunnel; never expose them publicly.
-On GCP, use the VM's reachable **private address** instead of `localhost`;
-localhost is valid on your laptop only while the SSH/IAP tunnel is active.
-The backend does not open tunnels or start the VM.
-
-For the existing `qdrant-vm`, once it is running, open a separate terminal:
+Configuration is resolved in this order: process environment, the `APP_SECRETS_JSON` secret, the root `.env` file, then defaults. Create the root `.env` from the provided template:
 
 ```sh
-gcloud compute start-iap-tunnel qdrant-vm 6333 \
-  --project=basicrahgapp --zone=europe-southwest1-a \
-  --local-host-port=localhost:6333
+cp .env.sample .env
 ```
 
-Keep the tunnel open while using the backend. The tunnel uses your authorized
-gcloud identity, not the backend's JSON key. It requires IAP tunnel access and
-Compute instance discovery permissions; Qdrant authentication still uses
-`QDRANT_API_KEY`. A stopped VM cannot serve requests through this tunnel.
-Starting or reconfiguring infrastructure remains a separate Terraform task.
+| Variable | Description |
+| --- | --- |
+| `ENV` | `LOCAL` or `GCP` (defaults to `LOCAL`) |
+| `GEMINI_API_KEY` | Gemini API key (required) |
+| `LLM_MODEL` | Generation model |
+| `EMBEDDING_MODEL` | Embedding model; must match the one used to build the knowledge base |
+| `GCS_BUCKET`, `GOOGLE_CLOUD_PROJECT` | Cloud Storage bucket and Google Cloud project (`GCP` mode) |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Service account key path, for local development only |
+| `QDRANT_HOST`, `QDRANT_PORT`, `QDRANT_URL`, `QDRANT_COLLECTION`, `QDRANT_API_KEY` | Qdrant connection (`GCP` mode); `QDRANT_URL` takes precedence over host and port |
+| `LOG_LEVEL`, `LOG_FORMAT` | Logging level and format (`json` or `text`) |
 
-If the frontend loads but chat stays disabled, check `/api/demo/ready`, not
-just `/api/health`: `{"status":"waiting","reason":"unreachable","retryable":true}`
-means the backend cannot reach Qdrant. For local GCP mode, confirm the tunnel is
-running and `curl http://localhost:6333/healthz` succeeds. A healthy `/api/health`
-confirms the frontend/backend connection, not document-service readiness.
+Never commit `.env` files or service account keys.
 
-Use the existing service-account key only for local development; relative
-credential paths resolve from the repository root, not the current directory.
-On GCP omit `GOOGLE_APPLICATION_CREDENTIALS` and use the attached runtime
-service account through Application Default Credentials, with bucket read
-permissions and private network access to Qdrant. Never commit a key.
-`GEMINI_API_KEY` and the existing model settings are still required.
+### 3.3 Local Deployment
 
-The runtime service account `historicguide@basicrahgapp.iam.gserviceaccount.com`
-only needs `roles/storage.objectViewer` on `historic-guide`, conditioned on
-objects under `docs/` and `prompts/`. It does not need project-wide Storage
-roles, bucket administration, object writes, or service-account token creation:
-PDFs are proxied by the backend, not exposed through signed URLs. Migration
-writes require separately authorized permissions; runtime read access is not
-sufficient to rerun the bucket migration.
+1. **Build the knowledge base.** Place the PDFs under `database/docs/<stop>/<type>/` and generate the SQLite snapshot (requires `GEMINI_API_KEY` and `EMBEDDING_MODEL`):
 
-GCP mode retains stop/type filtering, the top two cosine matches, model/dimension
-validation, PDF citations, inline PDF responses and HTTP byte-range support.
-Prompts use the same YAML/Pydantic validation. Cloud failures propagate and
-never silently fall back to local data. The Qdrant collection must already have
-been migrated; selecting GCP does not populate it. No infrastructure is changed.
+   ```sh
+   uv run database/scripts/provisional_db_gen.py
+   ```
 
-Offline regression tests (no cloud or Gemini requests):
+2. **Install and start the backend** from the repository root (set `ENV=LOCAL` in `.env`):
 
-```sh
-ENV=LOCAL uv run --project backend --locked \
-  python -m unittest discover -s backend/tests
+   ```sh
+   uv sync --project backend --locked
+   uv run --project backend --locked uvicorn src.app:app --app-dir backend --port 8000 --reload
+   ```
+
+   The API is available at `http://127.0.0.1:8000`, with interactive documentation at `/docs` and a health check at `/health`.
+
+3. **Install and start the frontend** in a second terminal:
+
+   ```sh
+   cd frontend
+   npm ci
+   npm run dev
+   ```
+
+   The Vite development server proxies `/api` requests to the backend on port 8000.
+
+4. **Run the tests** (optional):
+
+   ```sh
+   ENV=LOCAL uv run --project backend --locked python -m unittest discover -s backend/tests
+   npm --prefix frontend test
+   ```
+
+### 3.4 Cloud Deployment
+
+Plinius is deployed as a single container, serving the React frontend at `/` and the FastAPI backend at `/api`, on Google Cloud Run.
+
+1. **Publish the knowledge base to Cloud Storage.** Preview first, then upload the PDFs and prompts:
+
+   ```sh
+   uv run scripts/migrate_bucket.py --dry-run
+   uv run scripts/migrate_bucket.py --bucket historic-guide
+   ```
+
+2. **Migrate the embeddings to Qdrant** (reaching Qdrant through a private network or authorized tunnel):
+
+   ```sh
+   uv run scripts/migrate_to_qdrant.py --dry-run
+   uv run scripts/migrate_to_qdrant.py --url http://127.0.0.1:6333
+   ```
+
+3. **Build the container image** from the repository root:
+
+   ```sh
+   docker build --platform linux/amd64 -t historicguide:local .
+   ```
+
+   The image defaults to `ENV=GCP`, listens on port `8080` and runs as a non-root user. Secrets are never passed as build arguments.
+
+4. **Provide runtime configuration.** On Cloud Run, attach the runtime service account and rely on Application Default Credentials. The settings in section 3.2 are supplied through the single `historicguide-secrets` JSON secret, exposed as `APP_SECRETS_JSON`.
+
+5. **Provision and deploy the infrastructure.** Cloud resources are managed with Terraform and deployed through the GitHub Actions workflow: merge a same-repository `dev` pull request into `main`, then review and approve the saved plan in the protected `prod` environment. The one-time Google Cloud bootstrap and the full procedure are described in the [infrastructure guide](infra/README.md).
+
+6. **Verify the deployment.** `/api/health` confirms the service is running, and `/api/demo/ready` confirms that the knowledge base is ready for chat.
+
+## 4. Tech Stack
+
+Plinius is built on three main pillars:
+
+1. **Backend: Python and FastAPI.** The backend is implemented in Python with FastAPI. Utilities, agent memory and agent workflow are handled by custom classes, and no agent framework is used, which gives full control over how the system behaves. The LLM is accessed through the Google AI Studio (Gemini) API.
+2. **Frontend: React and Vite.** The user interface is a React application, built and served with Vite.
+3. **Cloud: Google Cloud Platform and Terraform.** The application is deployed on Google Cloud Platform (GCP), with the infrastructure defined as code using Terraform.
+
+## 5. Voice Processing
+
+Voice capabilities are provided by custom classes that make up the voice processing pipeline:
+
+1. **Speech-to-Text (STT):** transcribes the user's speech into text.
+2. **LLM agent:** sits in the middle of the pipeline, processing the transcribed text and generating the answer.
+3. **Text-to-Speech (TTS):** converts the answer into voice output.
+
+The STT and TTS layers can be activated or deactivated with a request parameter (`mode`), so the same endpoint can serve voice or text experiences:
+
+| Mode | Input | Output | Layers active |
+| --- | --- | --- | --- |
+| `full` | Audio | Audio | STT, LLM, TTS |
+| `stt` | Audio | Text | STT, LLM |
+| `tts` | Text | Audio | LLM, TTS |
+| `text` | Text | Text | LLM |
+
+### 5.1 Pipeline Flow
+
+Each request enters the same pipeline. The `mode` parameter determines whether the STT and TTS layers are executed around the LLM agent.
+
+```mermaid
+flowchart LR
+    U([User]) --> IN{Audio input?}
+    IN -- "full / stt" --> STT[STT layer<br/>speech to text]
+    IN -- "tts / text" --> AGENT
+    STT --> AGENT[LLM agent<br/>routing and RAG]
+    AGENT --> OUT{Audio output?}
+    OUT -- "full / tts" --> TTS[TTS layer<br/>text to speech]
+    OUT -- "stt / text" --> TXT([Text answer])
+    TTS --> WAV([Voice answer])
 ```
 
-From the repository root:
+### 5.2 Request Sequence
 
-```sh
-uv sync --project backend --locked
-uv run --project backend --locked uvicorn src.app:app --app-dir backend --reload
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as Chat endpoint
+    participant STT as STT layer
+    participant Agent as LLM agent
+    participant TTS as TTS layer
+
+    User->>API: Question (audio or text), stop, language, mode
+    opt mode is full or stt
+        API->>STT: Audio
+        STT-->>API: Transcribed text
+    end
+    API->>Agent: Text question and stop
+    Agent-->>API: Grounded answer
+    opt mode is full or tts
+        API->>TTS: Answer text
+        TTS-->>API: Audio
+    end
+    API-->>User: Text or audio answer
 ```
 
-No virtual environment activation is needed: `uv` uses `backend/.venv`.
-If the repository-root `.venv` is already active, run `deactivate` first to
-avoid the environment-mismatch warning. That warning is separate from import
-errors.
+## 6. RAG Agent
 
-Use `src.app:app` with `--app-dir backend`, not `app:app` with
-`--app-dir backend/src`: the backend imports modules through the `src` package,
-so its parent directory must be on the Python import path.
-Alternatively, from inside `backend`, run
-`uv run --locked uvicorn src.app:app --reload`.
+The LLM agent uses Retrieval-Augmented Generation (RAG) to ground its answers in the knowledge base. Each document chunk is stored in a collection with the **stop name** and the **type** (for example, historic or restaurants) as metadata, alongside the document information.
 
-### Backend logging
+For every request, the agent receives the current stop and extracts the user's intent from the question. That intent selects the type, so the query targets exactly the right metadata: the right stop and the right kind of content.
 
-The shared `Logger` in `backend/src/utils/logger/logger.py` uses standard Python
-logging and configures one application-only stdout handler at startup. JSON is
-the default, suitable for Cloud Run/Cloud Logging. Set process environment
-variables `LOG_LEVEL=DEBUG|INFO|WARNING|ERROR|CRITICAL` (default `INFO`) and
-`LOG_FORMAT=json|text` (default `json`); invalid values fail startup. These
-settings use the shared configuration precedence: process environment,
-`APP_SECRETS_JSON`, root `.env`, then defaults.
-Root and third-party handlers are not changed. For a single application access
-log without Uvicorn's additional access line, add `--no-access-log` to its command.
-Uvicorn still owns server/process diagnostics.
+### 6.1 Retrieval Flow
 
-Logs include UTC timestamps, severity/level, logger and module names, event names,
-and `correlation_id` (also emitted as `request_id` for compatibility). Each request
-emits `request.started` and a terminal `request.completed`, `request.failed`, or
-`request.interrupted` event. They record method, URL path (without query strings),
-client IP, route template, response status, and elapsed milliseconds, including
-stream delivery and background-task time. Status and duration appear on terminal
-events only. 4xx responses use WARNING and 5xx/failures use ERROR. Cancellation
-before response headers uses status 499; after headers, the actual status is
-preserved. Client IP comes from the ASGI connection, not untrusted forwarding
-headers; configure Uvicorn's trusted proxies for your deployment.
-The combined Cloud Run app logs frontend and mounted API requests once each.
-The [Terraform logging module](infra/modules/logging/main.tf) routes this
-service's structured container logs and Cloud Run's automatic frontend/API access
-logs to a private regional bucket with 30-day retention. Its service-only
-`_Default` exclusion prevents duplicate new storage without changing other apps.
-Cloud Run captures stdout/stderr without a Logging API permission on the runtime
-account. An error-entry counter and five-in-five-minutes Monitoring policy are
-provisioned; notification channels default to empty (console incidents only).
-Browser-console logs are not uploaded by this infrastructure. See the
-[observability guide](infra/README.md#1g-centralized-private-logs-and-error-monitoring)
-for retention variables, IAM boundaries, and separate dev/prod state guidance.
-Send a UUID in `X-Request-ID` to
-reuse it, or let the server generate one; responses return that header, including
-500 errors. Context is preserved through sync handlers and streaming workers,
-then reset between requests. A streamed processing failure emits a separate
-`chat.stream.failed` error even though its HTTP headers already report 200.
-Pipeline start/completion events use INFO and operational stages use DEBUG.
-
-Use `Logger(__name__)` and standard `info`, `debug`, `warning`, or `exception`
-methods; pass operational metadata through `extra`. No ID argument is needed:
-the shared `ContextVar` automatically enriches logs throughout the request.
-For explicitly created threads, use `copy_context().run` (as the streaming worker
-does); `asyncio.to_thread` and FastAPI's sync handlers propagate context already.
-Context does not cross process or network boundaries: forward `X-Request-ID`
-explicitly to cooperating downstream services when adding outbound HTTP calls.
-
-```python
-from src.utils.logger import Logger
-
-logger = Logger(__name__)
-logger.info("Retrieval completed", extra={"event": "retrieval.completed"})
+```mermaid
+flowchart TD
+    Q([User question]) --> S[Current stop]
+    Q --> ORC[Orchestrator<br/>extracts user intent]
+    ORC --> T{Type}
+    T -- historic --> F
+    T -- restaurant --> F
+    S --> F[Metadata filter<br/>stop and type]
+    Q --> EMB[Embed question]
+    EMB --> VS
+    F --> VS[(Vector collection)]
+    VS --> CH[Most relevant chunks]
+    CH --> GEN[LLM agent<br/>generates answer]
+    GEN --> A([Answer with sources])
 ```
 
-Only the documented operational
-fields are serialized. Never put secrets, prompts, questions, generated text,
-audio, or document content in log messages. URL paths are now logged, so do not
-put sensitive values in path segments. Query strings, request bodies, and headers
-are not logged. Global exception logs include their type and all stack frame
-locations, including chained exceptions, but omit exception messages, source
-lines, and local variables because provider errors can contain credentials or
-user data. The global handler emits one `request.exception` traceback even for
-mounted API failures; the separate `request.failed` event is its access record.
-Already-started streaming responses cannot be replaced with a JSON 500.
+### 6.2 Knowledge Base Structure
 
-`GET http://127.0.0.1:8000/health` returns HTTP 200 with `{"status":"ok"}`.
-This is a liveness check; it does not contact external services.
-Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
-ReDoc is available at `http://127.0.0.1:8000/redoc`, and the machine-readable
-OpenAPI schema at `http://127.0.0.1:8000/openapi.json`. Documentation includes
-request examples, JSON and WAV response formats, and applicable error responses.
-The current endpoints require no client authentication. `GEMINI_API_KEY` is
-server-side configuration, not a client credential.
-HTTP errors use a JSON `detail` string; automatic request validation uses a
-`detail` array of validation issues. Unhandled server failures return HTTP 500
-with sanitized JSON `{"detail":"Internal Server Error"}` and an `X-Request-ID`
-header in the default non-debug configuration.
-The route lives in `backend/src/api/Endpoint/health.py`, with its Pydantic
-response model in `backend/src/api/DataClass/health.py`.
-
-Run the health-check tests from the backend directory:
-
-```sh
-uv run python -m unittest tests.test_health
+```mermaid
+flowchart LR
+    subgraph KB[Collection]
+        direction TB
+        D1[Chunk<br/>stop: Pantheon<br/>type: historic]
+        D2[Chunk<br/>stop: Pantheon<br/>type: restaurants]
+        D3[Chunk<br/>stop: Roman_Forum<br/>type: historic]
+    end
+    F[Filter<br/>stop = Pantheon<br/>type = historic] --> D1
 ```
 
-### Chat
+### 6.3 Agent Sequence
 
-`POST /chat` accepts multipart form fields:
+```mermaid
+sequenceDiagram
+    actor User
+    participant Orc as Orchestrator
+    participant RAG as Retrieval
+    participant LLM as Response generator
+
+    User->>Orc: Question and current stop
+    Orc->>Orc: Extract intent and select type
+    Orc->>RAG: Stop and type
+    RAG->>RAG: Filter collection by stop and type
+    RAG->>RAG: Rank chunks against the question
+    RAG-->>LLM: Most relevant chunks and their sources
+    LLM-->>User: Grounded answer and sources
+```
+
+## 7. FastAPI Endpoints
+
+The backend exposes a small, documented REST API. Locally the routes are served at the root of the backend (`http://127.0.0.1:8000`); in the Cloud Run container the same API is mounted under the `/api` prefix, alongside the frontend served at `/`.
+
+### 7.1 Endpoint Overview
+
+| Method | Path | Purpose | Response |
+| --- | --- | --- | --- |
+| `GET` | `/health` | Liveness check of the API process | JSON |
+| `POST` | `/chat` | Generates a guide answer from text or audio | JSON, WAV audio or NDJSON stream |
+| `GET` | `/documents/{source}` | Opens a source PDF cited by an answer | PDF |
+| `GET` | `/demo/ready` | Checks that the knowledge base is ready for chat | JSON |
+| `POST` | `/demo/start` | Requests on-demand startup of the vector database VM | JSON |
+
+Interactive documentation is generated automatically: Swagger UI at `/docs`, ReDoc at `/redoc` and the OpenAPI schema at `/openapi.json` (under `/api` in the container). The endpoints require no client authentication; `GEMINI_API_KEY` is server-side configuration and is never sent by clients.
+
+```mermaid
+flowchart LR
+    C([Client]) --> API[FastAPI application]
+    API --> H["GET /health"]
+    API --> CH["POST /chat"]
+    API --> D["GET /documents/{source}"]
+    API --> R["GET /demo/ready"]
+    API --> S["POST /demo/start"]
+    CH --> P[Pipeline<br/>STT, LLM agent, TTS]
+    P --> G[(Gemini API)]
+    P --> V[(Vector database)]
+    D --> ST[(Document storage)]
+    R --> V
+    S --> VM[Vector database VM starter]
+```
+
+### 7.2 Health: `GET /health`
+
+Returns `{"status":"ok"}` with HTTP 200. It is a liveness check only: it makes no external calls and does not confirm that Gemini or the chat pipeline are ready.
+
+### 7.3 Chat: `POST /chat`
+
+Accepts `multipart/form-data`.
+
+| Field | Required | Values |
+| --- | --- | --- |
+| `query` | Yes | Text for `text` and `tts`, or an audio file (`audio/*`, at most 14,000,000 bytes) for `stt` and `full` |
+| `mode` | Yes | `text`, `stt`, `tts`, `full` |
+| `language` | Yes | `EN` or `ES` (answer language) |
+| `stop` | Yes | Nonempty tour stop name, such as `Pantheon` |
+| `request_type` | No | `historic` or `restaurant`; omit to classify the intent automatically |
+| `stream` | No | `true` returns progress and the answer as NDJSON (default `false`) |
+
+**Responses**
+
+| Mode | Output | Content type |
+| --- | --- | --- |
+| `text`, `stt` | `{"text": "...", "sources": [...]}` | `application/json` |
+| `tts`, `full` | WAV audio, with sources in the `X-PDF-Sources` header | `audio/wav` |
+| Any mode with `stream=true` | One JSON event per line | `application/x-ndjson` |
+
+Every answer includes its `sources`: PDF paths relative to the document corpus and one-based page numbers. Streamed responses emit `progress` events (`starting`, `transcribing`, `routing`, `retrieving`, `generating`, `synthesizing`; only executed stages appear), followed by a `result` event with `text`, or base64 `audio` and `mime_type`. A failure after streaming has started is reported as an explicit `error` event.
+
+```mermaid
+flowchart TD
+    REQ([POST /chat]) --> V{Valid request?}
+    V -- "No" --> E422[422 or 413 error]
+    V -- "Yes" --> M{mode}
+    M -- "stt / full" --> AUD[Read audio<br/>validate MIME and size]
+    M -- "text / tts" --> TXT[Validate text]
+    AUD --> PIPE[Pipeline run]
+    TXT --> PIPE
+    PIPE --> S{stream?}
+    S -- "false" --> OUTM{Audio output?}
+    OUTM -- "Yes" --> WAV([WAV audio and X-PDF-Sources])
+    OUTM -- "No" --> JSON([JSON text and sources])
+    S -- "true" --> ND([NDJSON progress and result events])
+```
+
+### 7.4 Documents: `GET /documents/{source}`
+
+Opens the PDF referenced in an answer's `sources`, inline and with HTTP byte-range support. In `LOCAL` mode the file is read from the local corpus; in `GCP` mode it is proxied from Cloud Storage, so no signed URLs are exposed. Unsafe paths, non-PDF files and missing documents return `404`.
+
+### 7.5 Demo readiness: `/demo/ready` and `/demo/start`
+
+These endpoints let the frontend wake and monitor the vector database that backs retrieval.
+
+| Endpoint | Behavior |
+| --- | --- |
+| `GET /demo/ready` | Checks Qdrant and the configured collection without starting anything; returns `200` when ready, `503` otherwise |
+| `POST /demo/start` | Requests startup of the shared VM; returns `202` while starting, `200` when ready (always in `LOCAL` mode), `503` on failure |
+
+Both return a `DemoStatus` body:
 
 | Field | Values |
 | --- | --- |
-| `query` | Text for `text`/`tts`, or an audio file for `stt`/`full` |
-| `mode` | `stt`, `tts`, `full`, `text` |
-| `language` | `ES` or `EN` (answer language) |
-| `stop` | Nonempty tour stop, such as `Pantheon` |
-| `request_type` | Optional `historic` or `restaurant`; omitted uses automatic topic classification |
-| `stream` | Optional boolean, default `false`; `true` streams progress and the answer as NDJSON |
+| `status` | `ready`, `starting`, `waiting`, `unavailable` |
+| `reason` | `unreachable`, `collection_missing`, `collection_empty`, `collection_incompatible`, `configuration`, `startup_failed` (when applicable) |
+| `retryable` | `true` if retrying may help |
 
-All modes execute the agent pipeline. `stt` transcribes audio and returns an
-answer as JSON; `text` returns an answer as JSON without transcription.
-Both return `{"text":"..."}`. `tts` generates an answer from text and returns
-WAV audio; `full` accepts audio and returns WAV audio.
-With `stream=true`, all modes instead return `application/x-ndjson`. Each line
-is a JSON event: `{"type":"progress","step":"routing"}`, followed eventually
-by `{"type":"result","text":"..."}` or, for audio output,
-`{"type":"result","audio":"<base64 WAV>","mime_type":"audio/wav"}`.
-Progress steps are `starting`, `transcribing`, `routing`, `retrieving`,
-`generating`, and `synthesizing`; only stages actually executed are emitted.
-These are operational status updates, not internal model reasoning.
-Input validation still returns the usual HTTP error before streaming begins.
-A failure after streaming starts is logged server-side and emits a terminal
-`{"type":"error","detail":"..."}` event instead of a result. Proxies must not
-buffer this response. Client cancellation does not stop an in-flight provider call.
-Uploaded files must declare an `audio/*` MIME type and contain at most
-14,000,000 bytes. Invalid requests return HTTP 422; oversized audio returns 413.
-Chat requires the `GEMINI_API_KEY` configuration described below.
-Set `LLM_MODEL` to a model ID such as `gemini-3.5-flash-lite`, with no
-embedded whitespace or pasted log output. A malformed value can cause Gemini
-HTTP 400 (`GenerateContentRequest.model: unexpected model name format`).
-For the existing RAG snapshot, set `EMBEDDING_MODEL=gemini-embedding-001`
-in the root `.env` and restart the backend after changing configuration.
-The model must match `build_info.embedding_model` in the database; a mismatch
-fails before the query embedding request. An environment variable overrides
-the `.env` value, so update or unset any conflicting `EMBEDDING_MODEL` export.
-The frontend uses `language=EN`. Suggested questions send `request_type`;
-freeform text and voice messages let the backend classify the topic.
-Use the corpus stop keys for retrieval: `Torre_Argentina`, `Forum_Boarium`,
-`Roman_Forum`, `Trajans_Markets`, or `Pantheon`.
+```mermaid
+sequenceDiagram
+    participant FE as Frontend
+    participant API as Backend
+    participant VM as Vector database VM
 
-```sh
-curl http://127.0.0.1:8000/chat \
-  -F 'query=Tell me about the Pantheon' \
-  -F 'mode=text' -F 'language=EN' -F 'stop=Pantheon' \
-  -F 'request_type=historic'
-
-curl http://127.0.0.1:8000/chat \
-  -F 'query=@recording.webm;type=audio/webm' \
-  -F 'mode=full' -F 'language=ES' -F 'stop=Pantheon' \
-  -F 'request_type=restaurant' \
-  --output answer.wav
+    FE->>API: GET /demo/ready
+    API->>VM: Check collection
+    alt Ready
+        API-->>FE: 200 ready
+    else Unreachable
+        API-->>FE: 503 waiting, unreachable
+        FE->>API: POST /demo/start
+        API->>VM: Request startup
+        API-->>FE: 202 starting
+        loop Until ready or timeout
+            FE->>API: GET /demo/ready
+            API-->>FE: 503 waiting or 200 ready
+        end
+    end
+    FE->>API: POST /chat
 ```
 
-Run the endpoint tests from the backend directory:
+### 7.6 Errors and Tracing
 
-```sh
-uv run python -m unittest tests.test_chat tests.test_health tests.test_openapi
+| Status | Meaning |
+| --- | --- |
+| `400` | The multipart body could not be parsed |
+| `404` | Source PDF not found |
+| `413` | Uploaded audio exceeds 14,000,000 bytes |
+| `422` | A field is missing or invalid, or the input does not match the mode |
+| `500` | Unhandled failure; returns `{"detail":"Internal Server Error"}` |
+| `503` | Vector database not ready (`/demo` endpoints) |
+
+HTTP errors use a JSON `detail` string, and validation errors use a `detail` array. Every response carries an `X-Request-ID` header; send a UUID in that header to reuse it as the correlation ID across the request logs.
+
+## 8. Frontend
+
+The frontend is a basic React application, built with Vite, that gives users a single, intuitive workspace to interact with Plinius. The user first chooses whether the voice is activated or not. From there, the user can communicate with the system in several ways and can consult the sources behind every answer.
+
+### 8.1 User Experience
+
+1. **Activate or deactivate the voice.** A toggle in the top bar (Voice on / Voice off) controls whether answers are spoken or shown as text. This maps directly to the `mode` parameter of the chat endpoint (see sections 5 and 7).
+2. **Select a stop.** The user can click a stop on the map or in the route bar above to move the guide to that stop. The selected stop sets the context used by the RAG agent.
+3. **Ask a question** in any of these ways:
+   - Suggested questions: one-click prompts to find food, find coffee, or explore the history of the current stop.
+   - Text chat: type a question in the message box.
+   - Voice chat: record a question with the microphone and send it to the guide.
+4. **Consult the sources.** Every answer lists the documents it was built from. Clicking a document opens the source PDF at the cited page, with the detailed guide.
+
+### 8.2 Interface Components
+
+| Area | Description |
+| --- | --- |
+| Top bar | Language (EN/ES), light/dark theme, voice on/off and reset controls |
+| Route bar | Ordered list of tour stops; selecting one changes the current stop |
+| Map | Interactive map of the route; stops can be clicked and the route is simulated |
+| Guide panel | Conversation, pipeline progress, suggested questions, text box and microphone |
+| Sources panel | Documents and pages used for the last answer, each linking to its PDF |
+
+### 8.3 Interaction Flow
+
+```mermaid
+flowchart TD
+    START([Open the app]) --> V{Voice on or off?}
+    V -- "On" --> M1[Answers returned as audio]
+    V -- "Off" --> M2[Answers returned as text]
+    M1 --> STOP
+    M2 --> STOP[Select a stop<br/>on the map or the route bar]
+    STOP --> ASK{How to ask?}
+    ASK -- "Suggested question" --> API
+    ASK -- "Type a message" --> API
+    ASK -- "Record voice" --> API
+    API[POST /chat<br/>stop, language, mode] --> ANS[Answer in the guide panel]
+    ANS --> SRC[Sources panel]
+    SRC --> PDF([Open source PDF at the cited page])
+    ANS --> ASK
 ```
 
-## Speech to text (Gemini)
+### 8.4 Frontend and Backend Communication
 
-Install backend dependencies with [uv](https://docs.astral.sh/uv/):
+```mermaid
+sequenceDiagram
+    actor User
+    participant UI as React frontend
+    participant API as FastAPI backend
 
-```sh
-cd backend
-uv sync
+    User->>UI: Open the app
+    UI->>API: GET /api/demo/ready
+    API-->>UI: Knowledge base status
+    User->>UI: Select a stop and ask a question
+    UI->>API: POST /api/chat (stop, language, mode, query)
+    API-->>UI: Progress events and answer with sources
+    UI-->>User: Answer (text or audio) and sources panel
+    User->>UI: Click a source
+    UI->>API: GET /api/documents/source
+    API-->>User: PDF at the cited page
 ```
 
-Set `GEMINI_API_KEY` in the repository-root `.env` file or environment to your
-Google AI Studio API key. Do not commit your key.
+### 8.5 Frontend Development
 
-From the backend directory:
+The frontend runs on the Vite development server, which proxies `/api` requests to the backend (see section 3.3).
 
-```sh
-uv run python -c 'from src.systems.STT.STT import STT; print(STT().transcribe("recording.wav"))'
+| Command (from `frontend/`) | Purpose |
+| --- | --- |
+| `npm run dev` | Start the development server |
+| `npm run build` | Create the production build served by the container |
+| `npm run lint` | Run ESLint |
+| `npm test` | Run the unit tests |
+
+## 9. Google Cloud Platform Deployment
+
+Plinius is deployed to Google Cloud Platform (GCP) through GitHub Actions. The image is stored in Artifact Registry and deployed to Cloud Run as a Docker container. Prompts and documents live in Cloud Storage, retrieval chunks are served by a Qdrant virtual machine, and secrets are held in Secret Manager. As a result, the application itself is fully stateless.
+
+### 9.1 Architecture
+
+```mermaid
+flowchart LR
+    U([User]) --> CR[Cloud Run<br/>historicguide-backend<br/>frontend and API]
+    CR --> GEM[(Gemini API)]
+    CR --> CS[(Cloud Storage<br/>prompts and documents)]
+    CR --> QD[(Qdrant VM<br/>chunks and embeddings)]
+    SM[Secret Manager<br/>historicguide-secrets] -.-> CR
+    AR[Artifact Registry<br/>container image] --> CR
 ```
 
-```python
-from src.systems.STT.STT import STT
+### 9.2 Services
 
-stt = STT()
-text = stt.transcribe("recording.mp3")
-# For in-memory audio, specify its actual encoding:
-text = stt.transcribe(audio_bytes, mime_type="audio/webm")
+| Service | Role |
+| --- | --- |
+| GitHub Actions | Builds the image and deploys the infrastructure |
+| Artifact Registry | Stores the Docker image; only the two newest images are retained |
+| Cloud Run | Runs the single container that serves the frontend (`/`) and the API (`/api`) |
+| Cloud Storage | Holds the prompts (`prompts/`) and the source PDF documents (`docs/`) |
+| Qdrant on Compute Engine | Virtual machine that stores the chunks and embeddings used for retrieval |
+| Secret Manager | Holds the `historicguide-secrets` secret, which contains the application configuration |
+| Cloud Logging and Monitoring | Centralized private logs and error alerts |
+| Terraform | Defines all of the above as infrastructure as code |
+
+### 9.3 Stateless Design
+
+The Cloud Run container keeps no local state. Everything it needs is read at runtime from managed services:
+
+- **Prompts and documents:** read from Cloud Storage, so the image contains neither the PDF corpus nor local databases.
+- **Chunks and embeddings:** retrieved from the Qdrant virtual machine over the private network.
+- **Configuration and credentials:** supplied by Secret Manager as the `APP_SECRETS_JSON` environment variable. The container authenticates to Google Cloud with its attached service account, so no key files are bundled.
+
+Because of this, any instance can serve any request, and the knowledge base can be updated without rebuilding the image.
+
+### 9.4 Continuous Deployment
+
+Deployment runs from a single GitHub Actions workflow, triggered when a pull request from the `dev` branch is merged into `main`.
+
+```mermaid
+flowchart TD
+    PR([Merge dev into main]) --> AUTH[Authenticate to GCP<br/>Workload Identity Federation]
+    AUTH --> BUILD[Build Docker image]
+    BUILD --> PUSH[Push to Artifact Registry]
+    PUSH --> DIGEST[Resolve immutable image digest]
+    DIGEST --> PRUNE[Keep the two newest images]
+    PRUNE --> PLAN[Terraform plan]
+    PLAN --> CHECK[Verify the plan only contains allowed changes]
+    CHECK --> APPROVE{Approval in the<br/>prod environment}
+    APPROVE -- "Approved" --> APPLY[Terraform apply]
+    APPLY --> RUN([New revision on Cloud Run])
 ```
 
-`STT` defaults to the low-cost `gemini-3.5-flash-lite` model, independently of
-`LLM_MODEL`. It returns only transcription text in the original language.
-The older `gemini-2.5-flash-lite` can return HTTP 404 for new users even when
-it appears in the model listing. Restart the backend after updating the code.
-To override the key, model, or output limit, pass an existing `GeminiClient`
-as `STT(client=GeminiClient(...))`.
-Inline requests must be smaller than 20 MB including base64 encoding and prompts
-(roughly under 15 MB of raw audio). API/network errors, blocked or empty
-responses, and truncated transcriptions raise exceptions instead of returning
-partial or fabricated text. This is batch transcription, not streaming STT.
+| Stage | Description |
+| --- | --- |
+| Authentication | GitHub authenticates to GCP with Workload Identity Federation; no service account keys are stored |
+| Build and publish | The image is built for `linux/amd64`, pushed to Artifact Registry and resolved to an immutable digest. The build is skipped when no application source changed |
+| Plan | Terraform plans the change and a plan checker rejects any unexpected resource change |
+| Approval | The saved plan is reviewed and approved in the protected `prod` environment |
+| Apply | Terraform applies that exact plan, deploying the digest to Cloud Run |
 
-`STT` is a thin public wrapper. Its implementation lives in
-`backend/src/systems/STT/utils/`, with one function per file:
-`create_client.py` for client defaults, `prepare_audio.py` for audio loading and
-MIME detection, and `transcribe.py` for the transcription request.
+### 9.5 Cloud Run Configuration
 
-Run the offline tests without an API key:
+| Setting | Value |
+| --- | --- |
+| Service | `historicguide-backend` in `europe-southwest1` |
+| Resources | 2 CPU and 2 GiB of memory |
+| Instances | Minimum 1 and maximum 1 |
+| Access | Public (frontend and API) |
+| Health check | Startup probe on `/api/health` |
+| Network | Private subnet with private-range egress, used to reach the Qdrant VM |
+| Environment | `ENV=GCP`, Qdrant host and port, project and region, and `APP_SECRETS_JSON` from Secret Manager |
 
-```sh
-uv run python -m unittest discover -s tests
+### 9.6 On-Demand Qdrant Startup
+
+The Qdrant virtual machine shuts down when idle to reduce cost. When the app is opened, the frontend checks `/api/demo/ready` and, if Qdrant is unreachable, calls `/api/demo/start` to wake the VM. Chat remains disabled until the collection is ready (see section 7.5).
+
+For the full Google Cloud bootstrap, permissions and Terraform procedure, see the [infrastructure guide](infra/README.md).
+
+## 10. Infrastructure as Code with Terraform
+
+Plinius uses Terraform as its Infrastructure as Code (IaC) tool to define and deploy the cloud infrastructure. Changes are delivered through a workflow divided into two parts: first, the changes are planned and the image is built and pushed; then, after a human developer reviews the plan, it is applied. The workflow starts from a pull request merged from `dev` into `main`.
+
+### 10.1 Two-Part Workflow
+
+```mermaid
+flowchart TD
+    PR([Pull request merged<br/>dev into main]) --> P1
+
+    subgraph P1[Part 1: Plan and build]
+        direction TB
+        B[Build the Docker image] --> PU[Push the image to Artifact Registry]
+        PU --> PL[Terraform plan]
+        PL --> CK[Check that the plan is allowed]
+    end
+
+    P1 --> REV{Human developer<br/>reviews the plan}
+    REV -- "Rejected" --> STOP([No changes applied])
+    REV -- "Approved" --> P2
+
+    subgraph P2[Part 2: Apply]
+        direction TB
+        AP[Terraform apply<br/>the reviewed plan] --> DEP([Deployment on Cloud Run])
+    end
 ```
 
-## Text to speech (Gemini)
+| Part | Job | What it does |
+| --- | --- | --- |
+| 1 | Build and plan | Builds and pushes the image, then runs the Terraform plan and verifies it. The plan is saved as an artifact |
+| Review | Human approval | A developer reviews the plan in the protected `prod` environment |
+| 2 | Apply | Applies that exact reviewed plan, so nothing changes between review and deployment |
 
-`TTS` uses the same backend installation and `GEMINI_API_KEY` configuration as
-`STT`. From the backend directory:
+The workflow runs only when a same-repository pull request from `dev` is merged into `main`. It does not run on a push, on an unmerged pull request or on a manual dispatch. It is defined in [.github/workflows/terraform-deploy.yml](.github/workflows/terraform-deploy.yml).
 
-```python
-from pathlib import Path
-from src.systems.TTS.TTS import TTS
+### 10.2 Repository Structure
 
-tts = TTS()
-audio = tts.synthesize("Welcome to Rome.", voice="Kore")
-Path("guide.wav").write_bytes(audio)
-```
+| Path | Content |
+| --- | --- |
+| `infra/environments/prod/` | Production environment: module composition, variables, outputs and remote state backend |
+| `infra/modules/storage/` | Cloud Storage bucket for prompts and documents |
+| `infra/modules/secrets/` | Secret Manager secret (metadata only) |
+| `infra/modules/artifact_registry/` | Docker repository and image retention policy |
+| `infra/modules/cloudrun/` | Cloud Run service and public access |
+| `infra/modules/logging/` | Private log bucket, log sink, error metric and monitoring alert |
+| `scripts/check_infra_plan.py` | Plan checker that rejects unexpected changes |
+| `scripts/registry_images.py` | Image tag selection and pruning |
 
-`synthesize()` returns mono, 16-bit WAV bytes, ready to save or serve as
-`audio/wav`. The default model is `gemini-2.5-flash-preview-tts`, independently
-of `LLM_MODEL`; the default voice is `Kore`. Pass
-`TTS(client=GeminiClient(...))` to override the model, key, timeout, or output
-limit. The model must support Gemini audio generation.
+### 10.3 Safety Controls
 
-Like `STT`, `TTS` is a thin public wrapper with one function per helper file in
-`backend/src/systems/TTS/utils/`: `create_client.py` for defaults,
-`synthesize.py` for synthesis, and `prepare_audio.py` for PCM-to-WAV conversion.
-This is batch synthesis, not streaming or local playback. Empty input, blocked
-or truncated responses, invalid audio, and API/network failures raise
-exceptions. The offline test command above covers both speech systems.
+- **Reviewed plan:** the plan saved in part 1 is the one applied in part 2, after human approval.
+- **Plan checker:** the plan is verified before it is uploaded and again before it is applied. It allows only the expected resources and rejects deletions, replacements, extra resources and unrelated changes.
+- **Immutable image:** the image is resolved to a digest, so Cloud Run deploys exactly the image that was built.
+- **Remote state:** Terraform state is stored in a Cloud Storage bucket under an isolated prefix, with state locking.
+- **Keyless authentication:** GitHub authenticates to GCP with Workload Identity Federation; no service account keys are stored.
+- **Protected resources:** the storage bucket and the secret use `prevent_destroy`, and secret values never enter the configuration, plans or state.
+- **Serialized runs:** a concurrency group prevents two deployments from running at the same time.
 
-## Request routing (Gemini)
+For the one-time bootstrap, permissions and the complete procedure, see the [infrastructure guide](infra/README.md).
 
-After installing the backend dependencies with `uv sync`, use the orchestrator
-from the backend directory:
+## 11. Author
 
-```python
-from src.systems.AgentSystem.Orchestrator.Orchestrator import Orchestrator
-
-orchestrator = Orchestrator()
-route = orchestrator.route("Pantheon", user_query="Where can I get coffee?")
-# route.model_dump(): {"category": "restaurant", "stop": "Pantheon"}
-
-route = orchestrator.route("Pantheon", param="historic")
-# Direct routing: no Gemini request or API key required.
-```
-
-Supply a nonempty string stop and exactly one of `user_query` or `param`.
-An explicit parameter must be exactly `historic` or `restaurant`. Queries use
-the existing `GeminiClient` and its `GEMINI_API_KEY` / `LLM_MODEL` configuration;
-pass `Orchestrator(client=GeminiClient(...))` to override the client.
-The classification prompt lives in
-`backend/src/config/prompts/orchestrator.yaml`. Pydantic validates the request,
-the model's single-word classification, and the returned `Route`.
-
-`Orchestrator` is a thin public wrapper. Each helper has its own file in
-`backend/src/utils/AgentSystem/Orchestrator/`: `route.py` coordinates
-routing, `load_prompt.py` loads the YAML prompt, and `classify_query.py` calls
-Gemini and validates its label. Each Pydantic model has its own file in the
-`dataclasses/` subfolder; shared field types live in `dataclasses/types.py`.
-
-The orchestrator returns only a routing destination, not an answer or generated
-guide content. It preserves the supplied stop (apart from surrounding whitespace)
-and does not advance the tour or invoke downstream agents. Request validation,
-invalid labels, prompt configuration errors, and API failures raise exceptions
-instead of silently selecting a destination. The offline test command above also
-covers routing without making live API calls.
-
-## Response generation (Gemini)
-
-`ResponseGenerator` uses the same backend dependencies and API-key configuration.
-Pass the orchestrator's destination and, optionally, the original query:
-
-```python
-from src.systems.AgentSystem.Orchestrator.Orchestrator import Orchestrator
-from src.systems.AgentSystem.ResponseGenerator.ResponseGenerator import ResponseGenerator
-
-query = "What is special about this dome?"
-route = Orchestrator().route("Pantheon", user_query=query)
-generator = ResponseGenerator()
-answer = generator.generate(**route.model_dump(), user_query=query)
-
-# Explicit categories also work, with or without a query:
-answer = generator.generate("Pantheon", "restaurant")
-
-# Optional caller-supplied context is supplemented with two database matches:
-answer = generator.generate(
-    "Pantheon",
-    "historic",
-    user_query=query,
-    context=["The Pantheon's dome has an open central oculus."],
-)
-```
-
-The generator selects `backend/src/config/prompts/historic.yaml` or
-`backend/src/config/prompts/restaurant.yaml` using the validated category
-(`historic` or `restaurant`). It returns only the answer string, suitable for
-passing to `TTS`. Before generating, it retrieves the two most similar chunks
-from `database/provisional_db/chunks.sqlite3`, filtering by the exact stop folder
-name and type (`historic`, or `restaurants` for category `restaurant`). Queries
-use `RETRIEVAL_QUERY` embeddings and cosine similarity, not a text search.
-When no query is provided, a category-specific introduction is embedded instead.
-If only one chunk matches, that chunk is used; no matches raise an error.
-Retrieved chunks are appended to optional caller-supplied context without
-modifying the caller's list. Both prompts instruct Gemini to ground factual
-claims in this context; prompt instructions do not guarantee factual accuracy.
-
-Build the provisional database before using response generation or `/chat`.
-The backend's `EMBEDDING_MODEL` must match the database model and dimensions.
-Missing databases, missing stop/type matches, corrupt or incompatible vectors,
-and embedding API failures propagate instead of silently generating an
-ungrounded answer. The default database path is repository-relative regardless
-of the working directory. Override it with
-`ResponseGenerator(database_path=Path("/path/to/chunks.sqlite3"))`
-after importing `Path` from `pathlib`. Each retrieval opens and closes a
-read-only connection so subsequent requests can read a rebuilt snapshot.
-The SQLite retrieval helper is separate from response generation; a future
-Qdrant implementation can preserve the stop/type filters and top-two behavior
-without changing the public generation API.
-
-The public class stays under `backend/src/systems/AgentSystem/ResponseGenerator/`.
-Helpers live in `backend/src/utils/AgentSystem/ResponseGenerator/`, one function
-per file, with one Pydantic model per file in its `dataclasses/` subfolder.
-Request fields reuse the orchestrator's route and text validation.
-The default Gemini client is created lazily, reused, and allows 1024 output
-tokens. Pass `ResponseGenerator(client=GeminiClient(...))` to override it.
-Invalid requests, missing or invalid prompts, empty or blocked responses, and
-API/network errors raise exceptions. The offline test command above also covers
-response generation without live API calls.
-
-### Response language
-
-`ResponseGenerator.generate()`, `AgentPipeline.run()`, and `Pipeline.run()` accept
-`language="en"` (English, the default) or `language="es"` (Spanish). Other values
-raise a validation error before any API call or speech stage runs. Both category
-prompts instruct Gemini to use the selected language regardless of the query or
-context language; this replaces automatic response-language detection.
-
-```python
-from src.systems.AgentSystem.AgentPipeline.AgentPipeline import AgentPipeline
-from src.systems.AgentSystem.ResponseGenerator.ResponseGenerator import ResponseGenerator
-from src.systems.Pipeline import Pipeline
-
-generator = ResponseGenerator()
-answer = generator.generate("Pantheon", "historic", language="es")
-answer = AgentPipeline().run("Pantheon", user_query="Explain the dome.", language="es")
-audio = Pipeline().run(
-    "Explain the dome.", "TTS", stop="Pantheon", language="es"
-)
-```
-
-STT continues to transcribe the original language. Language selection applies to
-the generated answer; when TTS is enabled, it speaks that answer without an
-additional translation step.
-
-## Text-to-text agent pipeline
-
-`AgentPipeline` connects the orchestrator to the response generator and returns
-only the final answer text:
-
-```python
-from src.systems.AgentSystem.AgentPipeline.AgentPipeline import AgentPipeline
-
-pipeline = AgentPipeline()
-answer = pipeline.run("Pantheon", user_query="What is special about this dome?")
-answer = pipeline.run("Pantheon", param="restaurant")
-
-# Optional extra context is passed through alongside database retrieval:
-answer = pipeline.run(
-    "Pantheon",
-    user_query="Describe the dome.",
-    context=["The Pantheon's dome has an open central oculus."],
-)
-```
-
-Supply `user_query`, `param`, or both, plus the stop. Text queries without a topic make
-three Gemini calls: classification, query embedding for filtered top-two
-retrieval, then answer generation using the original query and routed category.
-Explicit `historic` or `restaurant` parameters skip the classification call
-and generate using the selected prompt. If a question is also supplied, it is
-preserved for retrieval and generation; otherwise retrieval uses an introduction
-query. The standalone orchestrator still requires exactly one routing input.
-The entire input, including optional context chunks, is validated before any
-API call. Errors propagate without returning a route or fabricated answer.
-
-The pipeline accepts existing components as
-`AgentPipeline(orchestrator=..., response_generator=...)` for client overrides
-or testing. Default components are independent per pipeline, and their Gemini
-clients are created lazily and reused. The thin class lives under
-`backend/src/systems/AgentSystem/AgentPipeline/`; its helper and Pydantic request
-model live under `backend/src/utils/AgentSystem/AgentPipeline/`.
-This is synchronous text-to-text processing with database retrieval and metadata
-filtering; speech stages and HTTP serving are separate wrappers. The offline
-tests also cover retrieval ranking/filtering and the routing-to-generation flow.
-
-## Audio and text pipeline
-
-`Pipeline` always runs `AgentPipeline`, optionally adding speech input or output:
-
-| Mode | Input | Stages | Output |
-| --- | --- | --- | --- |
-| `STT` | Audio | STT → agents | Answer text |
-| `TTS` | Text | Agents → TTS | WAV bytes |
-| `full` | Audio | STT → agents → TTS | WAV bytes |
-| `only text` | Text | Agents | Answer text |
-
-From the backend directory:
-
-```python
-from pathlib import Path
-from src.systems.Pipeline import Pipeline
-
-pipeline = Pipeline()
-answer = pipeline.run("Tell me about the dome.", "only text", stop="Pantheon")
-answer = pipeline.run("recording.wav", "STT", stop="Pantheon")
-audio = pipeline.run("Where can I get coffee?", "TTS", stop="Pantheon", voice="Kore")
-audio = pipeline.run(
-    recording_bytes, "full", stop="Pantheon", mime_type="audio/webm"
-)
-Path("answer.wav").write_bytes(audio)
-```
-
-The mode is required and uses the exact spelling shown above. `STT` and `full`
-accept audio bytes or a file path (`str` or `Path`); raw bytes require an explicit
-audio MIME type. `TTS` and `only text` accept nonempty text, not audio bytes or
-`Path` objects. A string in an audio-input mode is a file path, never query text.
-The stop is required in every mode. Optional `context` chunks are passed through
-to the agents, and `voice` selects the output voice when TTS is enabled.
-Optional `request_type="historic"` or `request_type="restaurant"` selects a topic
-without classification and preserves the input question or transcript.
-Otherwise the agents classify the input text or transcript and generate the answer;
-TTS speaks that answer, not the original query.
-
-`Pipeline` accepts `agent_pipeline`, `stt`, and `tts` components for injection.
-Default speech components are created only when needed and reused, so text-only
-mode does not initialize speech clients. The thin class lives in
-`backend/src/systems/Pipeline.py`; helper functions and Pydantic validation live
-under `backend/src/utils/Pipeline/`. Invalid requests and stage failures raise
-exceptions, stopping subsequent stages. The offline tests cover all four modes,
-including complete flows using mocked Gemini HTTP responses.
+Created by **Vicente Zambrano**.
