@@ -43,12 +43,17 @@
   cursor: pointer;
 }
 
+.rome-map__pin[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .rome-map__pin:focus-visible {
   outline: none;
 }
 
-.rome-map__pin:focus-visible > circle:first-child,
-.rome-map__pin:hover > circle:first-child {
+.rome-map__pin:not([aria-disabled="true"]):focus-visible > circle:first-child,
+.rome-map__pin:not([aria-disabled="true"]):hover > circle:first-child {
   stroke: var(--gold-primary);
   stroke-width: 3px;
   fill: var(--gold-soft);

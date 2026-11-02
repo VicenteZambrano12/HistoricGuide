@@ -16,6 +16,129 @@ PUBLIC_SERVICE_NAMES = {
     "v1/projects/basicrahgapp/locations/europe-southwest1/services/historicguide-backend",
 }
 IMAGE_PATTERN = r"europe-southwest1-docker\.pkg\.dev/basicrahgapp/historicguide-repo/historicguide@sha256:[0-9a-f]{64}"
+LOGGING_RESOURCES = {
+    "module.logging.google_logging_project_bucket_config.application": "google_logging_project_bucket_config",
+    "module.logging.google_logging_project_sink.application": "google_logging_project_sink",
+    "module.logging.google_logging_project_exclusion.default_duplicate": "google_logging_project_exclusion",
+    "module.logging.google_logging_metric.errors": "google_logging_metric",
+    "module.logging.google_monitoring_alert_policy.errors": "google_monitoring_alert_policy",
+}
+SERVICE_LOG_FILTER = "\n".join([
+    'resource.type="cloud_run_revision"',
+    'resource.labels.project_id="basicrahgapp"',
+    'resource.labels.service_name="historicguide-backend"',
+    'resource.labels.location="europe-southwest1"',
+])
+ERROR_LOG_FILTER = SERVICE_LOG_FILTER + '\n(severity>=ERROR OR jsonPayload.level="ERROR" OR jsonPayload.status_code>=500 OR httpRequest.status>=500)'
+
+
+def logging_settings(plan: dict) -> dict:
+    variables = plan.get("variables", {})
+    settings = {key: variables.get(key, {}).get("value") for key in (
+        "environment", "log_bucket_id", "log_retention_days",
+        "log_error_threshold_count", "log_notification_channels",
+    )}
+    bucket = settings["log_bucket_id"]
+    threshold = settings["log_error_threshold_count"]
+    channels = settings["log_notification_channels"]
+    if (
+        settings["environment"] != "prod"
+        or not isinstance(bucket, str) or re.fullmatch(r"historicguide-prod-[a-z0-9-]+", bucket) is None
+        or settings["log_retention_days"] not in (14, 30)
+        or type(threshold) is not int or not 1 <= threshold <= 1000
+        or not isinstance(channels, list)
+        or any(not isinstance(channel, str) or re.fullmatch(
+            r"projects/basicrahgapp/notificationChannels/[0-9]+", channel,
+        ) is None for channel in channels)
+    ):
+        raise ValueError("Invalid production logging inputs, retention, threshold, or notification channels.")
+    return settings
+
+
+def check_logging(resource: dict, settings: dict) -> None:
+    resource_type = LOGGING_RESOURCES[resource["address"]]
+    change = resource["change"]
+    after = change.get("after") or {}
+    if (
+        resource.get("type") != resource_type
+        or change.get("actions") not in (["create"], ["update"], ["no-op"])
+        or change.get("importing") is not None
+        or after.get("project") != "basicrahgapp"
+    ):
+        raise ValueError("Only the expected logging resource creations or in-place updates are allowed.")
+    bucket = settings["log_bucket_id"]
+    labels = {"env": "prod", "application": "historicguide"}
+    if resource_type == "google_logging_project_bucket_config":
+        if (
+            after.get("bucket_id") != bucket or after.get("location") != "europe-southwest1"
+            or after.get("retention_days") != settings["log_retention_days"]
+        ):
+            raise ValueError("The log bucket must use its approved identity, region, and retention.")
+    elif resource_type in ("google_logging_project_sink", "google_logging_project_exclusion"):
+        expected_filter = " ".join(SERVICE_LOG_FILTER.split())
+        if not isinstance(after.get("filter"), str) or " ".join(after["filter"].split()) != expected_filter:
+            raise ValueError("Log routing/exclusion must match only the HistoricGuide Cloud Run service.")
+        if after.get("disabled") is not False:
+            raise ValueError("The dedicated log route and duplicate exclusion must remain enabled.")
+        if resource_type == "google_logging_project_sink":
+            if (
+                after.get("name") != f"{bucket}-sink"
+                or after.get("destination") != f"logging.googleapis.com/projects/basicrahgapp/locations/europe-southwest1/buckets/{bucket}"
+                or after.get("unique_writer_identity") is not True
+                or after.get("exclusions") or after.get("custom_writer_identity")
+            ):
+                raise ValueError("Route all service logs only to the same-project dedicated log bucket.")
+        elif after.get("name") != f"{bucket}-default-copy":
+            raise ValueError("Only the named service-specific _Default exclusion is allowed.")
+    elif resource_type == "google_logging_metric":
+        descriptors = after.get("metric_descriptor") or []
+        if (
+            after.get("name") != f"{bucket}-errors" or after.get("disabled") is not False
+            or after.get("filter") != ERROR_LOG_FILTER
+            or after.get("label_extractors") or after.get("value_extractor") or after.get("bucket_name")
+            or len(descriptors) != 1
+            or any(descriptors[0].get(key) != value for key, value in {
+                "metric_kind": "DELTA", "value_type": "INT64", "unit": "1",
+            }.items())
+            or descriptors[0].get("labels")
+        ):
+            raise ValueError("Only the bounded service-only ERROR/5xx counter is allowed.")
+    else:
+        conditions = after.get("conditions") or []
+        strategies = after.get("alert_strategy") or []
+        if (
+            after.get("display_name") != "prod: historicguide-backend error entries"
+            or after.get("enabled") is not True or after.get("combiner") != "OR"
+            or after.get("user_labels") != labels
+            or after.get("notification_channels") != settings["log_notification_channels"]
+            or len(conditions) != 1
+            or len(strategies) != 1 or strategies[0].get("auto_close") != "1800s"
+            or strategies[0].get("notification_rate_limit") or strategies[0].get("notification_channel_strategy")
+        ):
+            raise ValueError("Unexpected error alert identity, labels, channels, or strategy.")
+        thresholds = conditions[0].get("condition_threshold") or []
+        if len(thresholds) != 1:
+            raise ValueError("Only one error-count threshold condition is allowed.")
+        threshold = thresholds[0]
+        if any(threshold.get(key) != value for key, value in {
+            "filter": f'resource.type="cloud_run_revision" AND metric.type="logging.googleapis.com/user/{bucket}-errors"',
+            "comparison": "COMPARISON_GT", "threshold_value": settings["log_error_threshold_count"] - 1,
+            "duration": "0s",
+        }.items()):
+            raise ValueError("Alert must trigger at the approved five-minute error-entry threshold.")
+        triggers = threshold.get("trigger") or []
+        if (
+            len(triggers) != 1 or triggers[0].get("count") != 1 or triggers[0].get("percent")
+            or threshold.get("denominator_filter") or threshold.get("denominator_aggregations")
+            or threshold.get("forecast_options")
+        ):
+            raise ValueError("Only a simple error-count threshold trigger is allowed.")
+        aggregations = threshold.get("aggregations") or []
+        if len(aggregations) != 1 or any(aggregations[0].get(key) != value for key, value in {
+            "alignment_period": "300s", "per_series_aligner": "ALIGN_DELTA",
+            "cross_series_reducer": "REDUCE_SUM",
+        }.items()) or aggregations[0].get("group_by_fields"):
+            raise ValueError("Alert must sum five-minute error entries across all service revisions.")
 
 
 def check_cloudrun(after: dict, image: str) -> None:
@@ -23,6 +146,7 @@ def check_cloudrun(after: dict, image: str) -> None:
         "project": "basicrahgapp", "location": "europe-southwest1",
         "name": "historicguide-backend", "ingress": "INGRESS_TRAFFIC_ALL",
         "deletion_protection": False,
+        "labels": {"env": "prod", "application": "historicguide"},
     }
     if any(after.get(key) != value for key, value in expected.items()):
         raise ValueError("Unexpected Cloud Run identity or ingress settings.")
@@ -119,10 +243,13 @@ def check_plan(plan: dict) -> None:
     if plan.get("deferred_changes"):
         raise ValueError("Deferred resource changes are not allowed.")
     changes = plan.get("resource_changes", [])
-    if len(changes) != 5 or {resource.get("address") for resource in changes} != {
+    expected_addresses = {
         BUCKET_ADDRESS, SECRET_ADDRESS, REGISTRY_ADDRESS, CLOUDRUN_ADDRESS, PUBLIC_ADDRESS,
-    }:
-        raise ValueError("The plan must contain only the bucket, secret, repository, Cloud Run service and public invoker.")
+        *LOGGING_RESOURCES,
+    }
+    if len(changes) != len(expected_addresses) or {resource.get("address") for resource in changes} != expected_addresses:
+        raise ValueError("The plan must contain only the five application resources and five dedicated observability resources.")
+    settings = logging_settings(plan)
     image = plan.get("variables", {}).get("app_container_image", {}).get("value")
     if not isinstance(image, str) or re.fullmatch(IMAGE_PATTERN, image) is None:
         raise ValueError("The plan requires the workflow's immutable HistoricGuide image digest.")
@@ -131,7 +258,9 @@ def check_plan(plan: dict) -> None:
             raise ValueError("Resource reads, moves, and deposed resources are not allowed.")
         change = resource["change"]
         after = change.get("after") or {}
-        if resource["address"] == BUCKET_ADDRESS:
+        if resource["address"] in LOGGING_RESOURCES:
+            check_logging(resource, settings)
+        elif resource["address"] == BUCKET_ADDRESS:
             if resource.get("type") != "google_storage_bucket" or change.get("actions") != ["no-op"]:
                 raise ValueError("Bucket creation, updates, deletion, and replacement are forbidden.")
             if after.get("name") != "historic-guide":
@@ -198,4 +327,4 @@ if __name__ == "__main__":
     except (ValueError, KeyError, TypeError, AttributeError) as error:
         print(f"::error::{error}", file=sys.stderr)
         raise SystemExit(1) from error
-    print("Verified: HistoricGuide metadata, two-image retention, and digest-pinned Cloud Run with its public invoker only.")
+    print("Verified: HistoricGuide metadata, digest-pinned Cloud Run, private log retention/routing and service-only error alerting.")

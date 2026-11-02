@@ -9,7 +9,7 @@ const WAVE_HEIGHTS = [10, 18, 12, 26, 34, 20, 14, 30, 22, 38, 28, 16, 24, 34, 18
 
 export function HistorianVoicePanel() {
   const {
-    messages, isChatPending, chatProgress, chatError, chatSessionId,
+    messages, isChatPending, isInteractionBusy, chatProgress, chatError, chatSessionId,
     demoState, ensureDemoReady, t, resolveMessage
   } = useTour();
   const transcriptRef = useRef(null);
@@ -39,7 +39,7 @@ export function HistorianVoicePanel() {
               : t('demoStarting')}
           </p>
           {demoState.status === 'error' && (
-            <button type="button" onClick={() => { void ensureDemoReady(); }}>
+            <button type="button" disabled={isInteractionBusy} onClick={() => { void ensureDemoReady(); }}>
               {t('demoRetry')}
             </button>
           )}
@@ -81,7 +81,7 @@ export function HistorianVoicePanel() {
             ) : (
               <p className="voice-panel__msg-text">{resolveMessage(msg.text)}</p>
             )}
-            {msg.audio && <AudioAnswer audio={msg.audio} autoPlay={msg.autoPlay} />}
+            {msg.audio && <AudioAnswer audio={msg.audio} autoPlay={msg.autoPlay} isNarration={msg.isNarration} />}
           </div>
         ))}
       </div>

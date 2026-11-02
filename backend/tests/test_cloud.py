@@ -1,7 +1,9 @@
 import os
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+import warnings
 from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
@@ -12,12 +14,57 @@ from src.app import app
 from src.utils.AgentSystem.Orchestrator.load_prompt import load_prompt as orchestrator_prompt
 from src.utils.AgentSystem.ResponseGenerator.load_prompt import load_prompt as generation_prompt
 from src.utils.AgentSystem.ResponseGenerator.retrieve_chunks import retrieve_chunks
+from src.utils.AgentSystem.ResponseGenerator.retrieve_qdrant import qdrant_client
 from src.utils.general.cloud import bucket_bytes, environment
 from src.utils.general.GeminiApiCall import GeminiClient
 from src.utils.general.sources import collecting_sources
 
 
 class CloudConfigurationTests(unittest.TestCase):
+    def test_qdrant_host_uses_http_with_or_without_authentication(self) -> None:
+        for key in ("", "test-key"):
+            with (
+                self.subTest(authenticated=bool(key)),
+                patch(
+                    "src.utils.AgentSystem.ResponseGenerator.retrieve_qdrant._configuration_value",
+                    side_effect=lambda name, default="": {
+                        "QDRANT_HOST": "127.0.0.1", "QDRANT_PORT": "6333",
+                        "QDRANT_API_KEY": key,
+                    }.get(name, default),
+                ),
+                patch(
+                    "src.utils.AgentSystem.ResponseGenerator.retrieve_qdrant.QdrantClient",
+                    side_effect=partial(QdrantClient, check_compatibility=False),
+                ),
+            ):
+                with warnings.catch_warnings(record=True):
+                    remote = qdrant_client(timeout=3)
+                try:
+                    self.assertEqual(remote._client.rest_uri, "http://127.0.0.1:6333")
+                finally:
+                    remote.close()
+
+    def test_qdrant_explicit_url_preserves_protocol_and_overrides_host(self) -> None:
+        with (
+            patch(
+                "src.utils.AgentSystem.ResponseGenerator.retrieve_qdrant._configuration_value",
+                side_effect=lambda name, default="": {
+                    "QDRANT_URL": "https://qdrant.example:6333",
+                    "QDRANT_HOST": "ignored.example", "QDRANT_PORT": "1234",
+                    "QDRANT_API_KEY": "test-key",
+                }.get(name, default),
+            ),
+            patch(
+                "src.utils.AgentSystem.ResponseGenerator.retrieve_qdrant.QdrantClient",
+                side_effect=partial(QdrantClient, check_compatibility=False),
+            ),
+        ):
+            remote = qdrant_client(timeout=3)
+            try:
+                self.assertEqual(remote._client.rest_uri, "https://qdrant.example:6333")
+            finally:
+                remote.close()
+
     def test_explicit_environment_selection_and_invalid_mode(self) -> None:
         for value in ("LOCAL", "GCP"):
             with patch.dict(os.environ, ENV=value):

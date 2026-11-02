@@ -22,3 +22,21 @@ output "artifact_registry_image" {
   description = "Application image base; workflow tags it by commit and resolves its digest."
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/${module.artifact_registry.repository_id}/historicguide"
 }
+
+output "logging_bucket_name" {
+  description = "Centralized structured application and frontend/API access log bucket."
+  value       = module.logging.bucket_name
+}
+
+output "logging_service_filter" {
+  description = "Service-only filter to use with the logging bucket in Logs Explorer."
+  value       = module.logging.service_filter
+}
+
+output "logging_error_metric_type" {
+  value = module.logging.error_metric_type
+}
+
+output "logging_alert_policy_name" {
+  value = module.logging.alert_policy_name
+}

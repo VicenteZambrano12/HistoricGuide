@@ -4,13 +4,14 @@ Earlier stages adopted `gs://historic-guide` and created the global
 `historicguide-secrets` container in `basicrahgapp`. Its JSON versions were
 populated separately through the CLI; Terraform manages only secret metadata.
 
-The current stage preserves the bucket, secret, and dedicated Docker repository
-and creates **`historicguide-backend` in `europe-southwest1`** through the existing
-workflow. It follows the Cloud Run example: public frontend/API, 2 CPU / 2 GiB,
+The deployed application uses **`historicguide-backend` in `europe-southwest1`**,
+with its existing bucket, secret, and dedicated Docker repository. The current
+stage adds centralized private logging, retention, and error monitoring through
+the same workflow. Cloud Run follows the example: public frontend/API, 2 CPU / 2 GiB,
 and minimum/maximum one instance. The minimum instance incurs ongoing idle costs.
 It retains **two images total**, not a current image plus two previous ones.
 It does not upload secret versions or create Qdrant/network resources.
-Only the storage, secrets, Artifact Registry, and Cloud Run modules are retained.
+The active modules are storage, secrets, Artifact Registry, Cloud Run, and logging.
 The unused networking example has been removed: the existing VPC, subnets,
 firewall rules, and Qdrant VM remain externally managed.
 Other applications' infrastructure is not changed.
@@ -37,14 +38,17 @@ or a manual Actions dispatch.
 - Bucket name, location, storage class, public access prevention, uniform
   access, encryption enforcement, and seven-day soft deletion match the
   existing bucket.
-- No new labels are added. Terraform attribution labels are disabled so that
-  adoption does not require updating the bucket.
+- The corpus bucket's labels stay unchanged. Cloud Run and the Monitoring alert
+  receive `env=prod` and `application=historicguide` labels. Terraform attribution
+  labels remain disabled.
 - `prevent_destroy = true` and `force_destroy = false` protect the bucket.
 - The [plan checker](../scripts/check_infra_plan.py) allows exactly the bucket,
   `module.secrets.google_secret_manager_secret.app_secrets`,
   `module.artifact_registry.google_artifact_registry_repository.default`,
   `module.cloudrun.google_cloud_run_v2_service.backend`, and
-  `module.cloudrun.google_cloud_run_service_iam_member.public_access`. The bucket
+  `module.cloudrun.google_cloud_run_service_iam_member.public_access`, and exactly
+  five resources in `module.logging`: the dedicated log bucket, service sink,
+  service-only `_Default` exclusion, error metric, and Monitoring alert. The bucket
   must remain unchanged, with an optional import of `historic-guide`. The
   global `historicguide-secrets` secret may be created or remain unchanged;
   updates, deletion, replacement, imports of other secrets, extra resources,
@@ -57,6 +61,11 @@ or a manual Actions dispatch.
   Its only allowed IAM resource grants `roles/run.invoker` to `allUsers` on
   `historicguide-backend`, matching the public example. Deletion/replacement,
   secret versions, additional IAM, networking, and unrelated resources are rejected.
+- Logging creations and in-place updates must retain the approved bucket identity,
+  14/30-day retention, exact service/project/region filter, same-project destination,
+  enabled routing, and input-matching error threshold and notification channels.
+  Logging deletion/replacement, broad exclusions, cross-project exports, and
+  project IAM resources remain forbidden.
 - The secret also uses `prevent_destroy = true`. Only its metadata enters
   Terraform state; there is no secret value in configuration, plans, or state.
 - Bucket objects and bucket IAM are deliberately outside Terraform in this
@@ -64,14 +73,14 @@ or a manual Actions dispatch.
 - The backend bucket itself is pre-existing bootstrap infrastructure; this
   configuration does not import it. The expected cloud writes are state/locks,
   image uploads, removal of images beyond the newest two, and the reviewed
-  Cloud Run service/public-invoker creation or in-place service updates.
+  Cloud Run updates and dedicated logging/Monitoring creation or in-place updates.
 
 ## 1. One-time GCP bootstrap (manual)
 
 The initial bucket bootstrap is already configured for this repository. The
 commands below document that setup; do not recreate verified existing resources.
 Secret permissions are documented in **1d**, registry permissions in **1e**,
-and the approved Cloud Run bootstrap in **1f**.
+the approved Cloud Run bootstrap in **1f**, and observability in **1g**.
 Use an administrator identity authorized to create WIF providers/custom roles
 and add IAM bindings. These are **not** workflow steps:
 GitHub needs these permissions before Terraform can authenticate or store state.
@@ -349,6 +358,148 @@ separately before chat can work. `/api/health` stays process liveness; Cloud Run
 probes and deployment frontend/health checks never start Qdrant.
 In `ENV=LOCAL`, demo preparation makes no cloud calls.
 
+### 1g. Centralized private logs and error monitoring
+
+The [logging module](modules/logging/main.tf) provisions:
+
+| Resource | Production default |
+| --- | --- |
+| Regional Cloud Logging bucket | `historicguide-prod-logs`, `europe-southwest1`, 30-day retention |
+| Project sink | Only `historicguide-backend` revisions in this project and region |
+| `_Default` exclusion | The same exact service filter; enabled only after the dedicated sink exists |
+| Log-based counter | `ERROR` severity, JSON `level="ERROR"`, JSON `status_code>=500`, or infrastructure HTTP status >=500 |
+| Monitoring policy | At least five matching entries in five minutes, summed across service revisions |
+
+Both frontend hosting and FastAPI run in one container/service. One bucket
+therefore holds structured container stdout/stderr, Cloud Run system logs, and
+Cloud Run's automatic HTTP access logs for `/`, assets, and `/api/*`.
+No load balancer or API Gateway is deployed, so there is no separate access-log
+switch to enable. Do not disable Cloud Run request logs or route them elsewhere.
+Browser-console logs are not automatically uploaded: this module does not add a
+browser telemetry collector. Backend and frontend requests can be distinguished
+using their request paths; application entries remain structured `jsonPayload`.
+
+The bucket is private under existing project IAM and uses Google-managed
+encryption. No public reader, new broad log-reader grant, service-account key,
+or direct Logging API writer permission is introduced. Bucket deletion is
+protected with `prevent_destroy`; retention is explicitly 30 days but is not
+irreversibly locked. Bucket/sink/metric resources do not support generic GCP
+labels in this provider; their names/descriptions encode the environment.
+Cloud Run and the alert support and receive environment/application labels.
+
+**Exact runtime logging IAM: none.** Cloud Run's platform collects container
+stdout/stderr and HTTP request logs independently of the application's account.
+The sink routes to a log bucket in the **same project**, so it requires no new
+writer identity or destination IAM binding. `roles/logging.logWriter` and
+`roles/logging.bucketWriter` on the application account would be unnecessary.
+This design deliberately avoids granting project IAM administration to Terraform.
+
+The existing `_Default` sink remains externally managed. Its new named
+project exclusion only prevents duplicate **new HistoricGuide logs** there,
+after dedicated routing exists; it leaves other services and `_Required` audit
+retention untouched. Existing `_Default` copies retain their original 30-day
+policy and are not moved, deleted, or shortened retroactively. Selecting 14 days
+later changes the dedicated bucket only; historical/default or other external
+exports may still have their original retention.
+
+The Logging and Monitoring APIs were already enabled. With explicit approval,
+the custom project role `historicGuideLoggingDeploy` was bootstrapped on the
+existing deployment account with exactly:
+
+```text
+logging.buckets.create/get/update
+logging.sinks.create/get/update
+logging.exclusions.create/get/update
+logging.logMetrics.create/get/update
+logging.operations.get
+monitoring.alertPolicies.create/get/update
+```
+
+These are 16 individual configuration permissions. They do not include log-entry
+read/write, resource deletion, API enablement, or IAM editing. Their effective
+presence and those denied permissions were tested as the actual account.
+They are project-scoped and can configure other project logging resources;
+the strict plan guard restricts this workflow to the five named resources.
+This is not runtime/CI identity isolation: the project currently reuses
+`historicguide@basicrahgapp.iam.gserviceaccount.com` for both. The user explicitly
+approved retaining that identity and granting these deployment capabilities.
+Separating CI and runtime accounts is a distinct change, not silently introduced.
+
+#### Production variables
+
+The root [variables](environments/prod/variables.tf) use these defaults, so no
+additional GitHub setting is required:
+
+```hcl
+environment               = "prod"
+log_bucket_id             = "historicguide-prod-logs"
+log_retention_days        = 30
+log_error_threshold_count = 5
+log_notification_channels = []
+```
+
+For the existing GitHub workflow, change the production variable defaults in a
+reviewed PR to configure retention (14 or 30 days), the threshold, or existing
+notification channel resource names. Alternatively, pass the matching `TF_VAR_*`
+values in the **Terraform Plan** step; the saved plan captures the choices and
+apply must not regenerate them. A local non-applied plan can use a `-var-file`
+containing the HCL assignments above. Do not run local apply.
+Changing an existing bucket ID requires a migration and will be rejected by the
+deletion/replacement guard; choose its name before first apply.
+
+The empty channel list is intentional: incidents appear in Monitoring, but no
+email/webhook is sent. To notify, supply existing verified channels, for example
+`["projects/basicrahgapp/notificationChannels/123456789"]`. No email addresses or
+webhook secrets are stored in this configuration. Error counts are **entries**,
+not deduplicated requests; one failed request can emit both an application error
+and an infrastructure 5xx log. Metrics begin counting after creation; they do not
+backfill historical logs. Alert delivery/incident behavior must be verified after
+the workflow creates these resources.
+
+#### Development environment
+
+The reusable module supports `dev` and `prod`. The existing production root
+deliberately rejects `environment="dev"`; do not point development at production
+state or at the production service. In a separate dev root with an isolated state
+prefix and its own Cloud Run service, call the same module:
+
+```hcl
+module "logging" {
+  source                = "../../modules/logging"
+  project_id            = var.project_id
+  region                = var.region
+  environment           = "dev"
+  service_name          = "historicguide-dev-backend"
+  bucket_id             = "historicguide-dev-logs"
+  retention_days        = 14
+  error_threshold_count = 5
+  notification_channels = []
+}
+```
+
+This example does not provision a dev deployment or modify the protected
+production workflow. A dev workflow/root needs its own resource-specific plan
+allowlist and deployment approval configuration.
+
+#### Verify after the approved workflow applies
+
+Use the `logging_bucket_name`, `logging_service_filter`,
+`logging_error_metric_type`, and `logging_alert_policy_name` Terraform outputs.
+In Logs Explorer, select the dedicated bucket in the log scope, then paste the
+service filter. Ordinary `/` and `/api/health` requests should produce frontend
+and API access entries without waking Qdrant. The following narrow filter selects
+native HTTP access entries:
+
+```text
+resource.type="cloud_run_revision"
+resource.labels.service_name="historicguide-backend"
+log_id("run.googleapis.com/requests")
+```
+
+Do not deliberately generate production failures or synthetic error entries
+without approval. Verify retention, enabled sink/exclusion, metric, and alert
+configuration before testing notification delivery.
+
 ## 2. Configure GitHub before merging
 
 Open [repository settings](https://github.com/VicenteZambrano12/HistoricGuide/settings).
@@ -402,14 +553,14 @@ git add .github/workflows/terraform-deploy.yml \
   infra/environments/prod/outputs.tf \
   infra/environments/prod/variables.tf \
   infra/modules/cloudrun/main.tf infra/modules/cloudrun/variables.tf \
-  backend/src/container.py backend/src/utils/general/GeminiApiCall.py \
-  backend/tests/test_container.py backend/tests/test_gemini_client.py \
+  infra/modules/logging/main.tf infra/modules/logging/variables.tf \
+  infra/modules/logging/outputs.tf \
   scripts/check_infra_plan.py scripts/tests/test_check_infra_plan.py \
   README.md
 
 git diff --cached --stat
 git diff --cached --check
-git commit -m "infra: deploy HistoricGuide to Cloud Run through Terraform" \
+git commit -m "infra: provision service-scoped logging and error monitoring" \
   -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 git push -u origin dev
 ```
@@ -423,15 +574,16 @@ workflow-resolved application image digest; no `terraform.tfvars` file is needed
 
 1. Open **Pull requests → New pull request**: base `main`, compare `dev`.
 2. Review **Files changed**: the active root preserves storage/secret/registry
-   and activates only the adapted Cloud Run module and its public invoker.
+   and adds only the logging module and environment labels to Cloud Run.
    No networking, Qdrant, secret-version, or additional IAM resources should appear.
 3. Merge the PR. This triggers the existing **closed + merged dev PR**
    workflow. Simply pushing `dev` will not run it.
 4. Open **Actions → Deploy GCP Infrastructure (Terraform)** and select the run.
 5. Open **Build image and plan Cloud Run → Show Terraform Plan**.
-   The first Cloud Run deployment must show **2 to add, 0 to change, 0 to destroy**:
-   only `historicguide-backend` and its public invoker. Bucket, secret metadata,
-   and repository must stay unchanged. Check the image is in
+   The first observability deployment must show **5 to add, 1 to change,
+   0 to destroy**: five logging/monitoring resources and Cloud Run environment
+   labels (plus an image update if the workflow builds a new image). Bucket,
+   secret metadata, repository, and public invoker stay unchanged. Check the image is in
    `historicguide-repo/historicguide@sha256:...`, port 8080, the expected account,
    private subnet, and JSON secret reference. No secret values should appear.
 6. Only after inspecting that plan, click **Review deployments → prod →
@@ -446,7 +598,7 @@ workflow-resolved application image digest; no `terraform.tfvars` file is needed
    immutable image reference. Open the URL to view the frontend. Test chat only
    after Qdrant is running with the correct collection and embedding model.
 
-The expected result is the isolated state tracking five resources, the bucket
+The expected result is the isolated state tracking ten resources, the bucket
 and JSON secret versions unchanged, and the public frontend/API running from
 the workflow-published digest in the dedicated repository.
 The import block can stay: later runs are idempotent and do not re-import a
@@ -476,6 +628,9 @@ resource already in this state.
   Fix the build error and rerun all jobs; already-published SHA tags are reused.
 - Cloud Run secret access denied: check the direct Secret Accessor binding on
   `historicguide-secrets`, its enabled version, and the runtime account.
+- Logging/Monitoring configuration denied: check the approved custom
+  `historicGuideLoggingDeploy` role and IAM propagation. Do not grant Logging
+  Admin or direct log-entry write/read permissions to solve a configuration error.
 - Private Qdrant failures: start/check the existing VM separately, verify its
   collection/model and API key, then subnet/firewall connectivity. Do not change
   unrelated network resources or assume a healthy HTTP process means chat works.
@@ -493,7 +648,7 @@ changes. A working directory already initialized against the GCS backend may
 still require authorized Application Default Credentials during initialization:
 
 ```sh
-terraform -chdir=infra/environments/prod fmt -check . ../../modules/storage ../../modules/secrets ../../modules/artifact_registry ../../modules/cloudrun
+terraform -chdir=infra/environments/prod fmt -check . ../../modules/storage ../../modules/secrets ../../modules/artifact_registry ../../modules/cloudrun ../../modules/logging
 terraform -chdir=infra/environments/prod init -backend=false -input=false -lockfile=readonly
 terraform -chdir=infra/environments/prod validate
 ENV=LOCAL PYTHONPATH=backend uv run --project backend --locked python -m unittest scripts.tests.test_check_infra_plan scripts.tests.test_registry_images backend.tests.test_container backend.tests.test_gemini_client

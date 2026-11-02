@@ -32,9 +32,19 @@ Interface translations, stop labels, and suggested questions live in
 Keep both dictionaries' keys and interpolation placeholders in sync.
 
 Switching updates the page language, backend answer language, and browser
-narration voice. It cancels pending chat and microphone recording and stops
-audio playback without resetting the tour. Existing user messages and backend
+narration voice. Switching cancels pending chat and recording and stops audio
+playback without resetting the tour. Existing user messages and backend
 answers stay in their original language; new requests use the selected language.
+
+Tour action buttons, map pins, source links, and audio controls are locked while
+a chat request, simulated walk, or voice recording is in progress, preventing
+another tour action before the current one finishes. The navbar's language,
+theme, narration, and restart buttons always remain enabled. Restart cancels the
+current request, walk, and recording; changing language cancels chat and
+recording. During recording, **Stop and send** also remains enabled. Action
+controls unlock on completion or failure; audio playback itself does not hold
+the lock. Background document preparation does not block the first action:
+chat, arrival, and suggested questions wait for readiness inside their request.
 
 ## Running with the backend
 
@@ -67,8 +77,9 @@ Walking and GPS remain simulated.
 The tour also prepares its document service through same-origin
 `GET /api/demo/ready` and `POST /api/demo/start`. In GCP mode the backend reuses the
 existing public Qdrant VM starter. The guide panel shows a translated startup or
-failure message and retry button; message, microphone, arrival, and suggested
-question controls wait for readiness. Preparation stops after three minutes and
+failure message and retry button. Message, microphone, arrival, and suggested
+question controls are available immediately; submitted requests wait for
+readiness before contacting chat. Preparation stops after three minutes and
 never continues polling after success. Each new chat rechecks readiness to handle
 the shared VM shutting down while the page is idle. No background heartbeat or
 new infrastructure is introduced, preserving its existing idle shutdown.
@@ -180,7 +191,7 @@ freeform messages omit it so the backend selects the topic automatically.
 | --- | --- | --- |
 | `text` | Typed message, arrival/replay, or suggested question with narration off | Streamed result text shown in the transcript |
 | `tts` | Typed message, arrival/replay, or suggested question with narration on | Streamed base64 WAV decoded for narration and playback controls |
-| `full` | Recorded voice message | Streamed base64 WAV decoded for playback controls |
+| `full` | Recorded voice message | Streamed base64 WAV decoded for automatic playback and playback controls |
 
 Press **Microphone** to record, then **Stop and send** to submit the voice
 message. Recording requires microphone permission and HTTPS or localhost.
@@ -189,18 +200,23 @@ a decorative waveform, and a translated "Voice message" label instead of the
 filename. User voice bubbles are visual only, without audio playback controls;
 the guide's audio replies use the orb player described below.
 Permission and recording errors are shown in the chat. The microphone is released
-after recording, on errors, and when leaving or resetting the chat, including
-when a pending permission request resolves after navigation.
+after recording, on errors, and when leaving the app, including when a pending
+permission request resolves after the recorder has unmounted. Tour navigation
+remains locked until recording finishes; navbar restart or language switching
+cancels the recording.
 Recordings must be nonempty and at most 14,000,000 bytes. WAV replies
-from recorded voice messages are played explicitly with the transcript's audio
-controls. Enabling the navbar's voice toggle only affects future responses: it
+from recorded voice messages play automatically when the request finishes,
+even when the narration toggle is off. Playback controls remain available.
+Enabling the navbar's voice toggle only affects future responses: it
 does not send a request or replay the current answer. While enabled, **Replay
 introduction**, typed messages, and suggested questions request backend `tts` audio
-instead of browser speech synthesis. Narration replies attempt to play
-automatically; if the browser blocks playback, an error is shown and the orb
+instead of browser speech synthesis. All guide audio replies, including the
+closing response, attempt to play automatically; if the browser blocks playback,
+an error is shown and the orb
 remains available for manual playback. Disabling narration pauses its audio
-and restores text replies. The toggle is disabled while chatting, walking, or
-recording to avoid overlapping requests.
+and restores text replies. The navbar toggle remains available during other
+interactions and does not change the mode of an already submitted request.
+Turning narration back on does not automatically replay an older reply.
 
 Guide audio replies use a river-blue orb instead of
 the browser's native player. Tap the orb to play or pause; the swirling animation
@@ -220,10 +236,12 @@ timers or internal model reasoning. The current step is highlighted and previous
 steps remain visible until the answer arrives. Proxies must disable buffering
 for `application/x-ndjson` responses.
 Errors and interrupted streams are shown without falling back to demo answers.
-Chat times out after two minutes. Changing stops, finishing, or resetting the
-tour cancels a pending client request, and late responses are not added to the
-transcript. Resetting also cancels a simulated walk so it cannot send a stale
-arrival request. Finishing requests a new backend-generated closing response.
+Chat times out after two minutes. Changing stops and finishing are blocked until
+the current request or simulated walk finishes. Navbar restart and language
+switching can cancel a pending request; restart also cancels walking and clears
+the transcript. Leaving the app cancels a pending client request. Late responses
+are not added to the transcript. Finishing requests a new backend-generated
+closing response.
 Cancellation does not guarantee the server stops an in-flight
 generation or avoids provider charges.
 

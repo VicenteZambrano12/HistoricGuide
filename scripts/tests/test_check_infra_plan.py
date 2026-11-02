@@ -4,7 +4,7 @@ import subprocess
 import sys
 import unittest
 
-from scripts.check_infra_plan import check_plan
+from scripts.check_infra_plan import check_plan, ERROR_LOG_FILTER, SERVICE_LOG_FILTER
 
 
 class InfrastructurePlanTests(unittest.TestCase):
@@ -74,6 +74,7 @@ class InfrastructurePlanTests(unittest.TestCase):
                     "project": "basicrahgapp", "location": "europe-southwest1",
                     "name": "historicguide-backend", "ingress": "INGRESS_TRAFFIC_ALL",
                     "deletion_protection": False,
+                    "labels": {"env": "prod", "application": "historicguide"},
                     "traffic": [{"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}],
                     "template": [{
                         "service_account": "historicguide@basicrahgapp.iam.gserviceaccount.com",
@@ -119,6 +120,58 @@ class InfrastructurePlanTests(unittest.TestCase):
                 },
             },
         }])
+        bucket = "historicguide-prod-logs"
+        self.plan["variables"].update({
+            "environment": {"value": "prod"},
+            "log_bucket_id": {"value": bucket},
+            "log_retention_days": {"value": 30},
+            "log_error_threshold_count": {"value": 5},
+            "log_notification_channels": {"value": []},
+        })
+        self.logging = {}
+        for resource_type, name, after in (
+            ("google_logging_project_bucket_config", "application", {
+                "bucket_id": bucket, "location": "europe-southwest1", "retention_days": 30,
+            }),
+            ("google_logging_project_sink", "application", {
+                "name": f"{bucket}-sink", "filter": SERVICE_LOG_FILTER,
+                "destination": f"logging.googleapis.com/projects/basicrahgapp/locations/europe-southwest1/buckets/{bucket}",
+                "unique_writer_identity": True, "disabled": False,
+            }),
+            ("google_logging_project_exclusion", "default_duplicate", {
+                "name": f"{bucket}-default-copy", "filter": SERVICE_LOG_FILTER, "disabled": False,
+            }),
+            ("google_logging_metric", "errors", {
+                "name": f"{bucket}-errors", "filter": ERROR_LOG_FILTER, "disabled": False,
+                "metric_descriptor": [{"metric_kind": "DELTA", "value_type": "INT64", "unit": "1"}],
+            }),
+            ("google_monitoring_alert_policy", "errors", {
+                "display_name": "prod: historicguide-backend error entries",
+                "enabled": True, "combiner": "OR", "notification_channels": [],
+                "user_labels": {"env": "prod", "application": "historicguide"},
+                "alert_strategy": [{
+                    "auto_close": "1800s", "notification_rate_limit": [],
+                    "notification_channel_strategy": [], "notification_prompts": None,
+                }],
+                "conditions": [{"condition_threshold": [{
+                    "filter": f'resource.type="cloud_run_revision" AND metric.type="logging.googleapis.com/user/{bucket}-errors"',
+                    "comparison": "COMPARISON_GT", "threshold_value": 4, "duration": "0s",
+                    "trigger": [{"count": 1, "percent": None}],
+                    "aggregations": [{
+                        "alignment_period": "300s", "per_series_aligner": "ALIGN_DELTA",
+                        "cross_series_reducer": "REDUCE_SUM", "group_by_fields": None,
+                    }],
+                }]}],
+            }),
+        ):
+            resource = {
+                "address": f"module.logging.{resource_type}.{name}", "mode": "managed",
+                "type": resource_type, "change": {
+                    "actions": ["create"], "after": {"project": "basicrahgapp", **after},
+                },
+            }
+            self.logging[resource_type] = resource
+            self.plan["resource_changes"].append(resource)
 
     def test_import_and_metadata_creation_are_allowed(self) -> None:
         check_plan(self.plan)
@@ -381,6 +434,114 @@ class InfrastructurePlanTests(unittest.TestCase):
             with self.subTest(actions=actions), self.assertRaises(ValueError):
                 public["actions"] = actions
                 check_plan(self.plan)
+
+    def test_logging_retention_must_be_approved_and_match_plan_input(self) -> None:
+        bucket = self.logging["google_logging_project_bucket_config"]["change"]["after"]
+        for days in (1, 90, 365, None):
+            with self.subTest(days=days), self.assertRaises(ValueError):
+                bucket["retention_days"] = days
+                check_plan(self.plan)
+        bucket["retention_days"] = 14
+        with self.assertRaises(ValueError):
+            check_plan(self.plan)
+        self.plan["variables"]["log_retention_days"]["value"] = 14
+        check_plan(self.plan)
+
+    def test_logging_resources_cannot_be_deleted_replaced_or_imported(self) -> None:
+        for resource in self.logging.values():
+            for actions in (["delete"], ["delete", "create"], ["read"]):
+                with self.subTest(address=resource["address"], actions=actions), self.assertRaises(ValueError):
+                    plan = copy.deepcopy(self.plan)
+                    candidate = next(item for item in plan["resource_changes"] if item["address"] == resource["address"])
+                    candidate["change"]["actions"] = actions
+                    check_plan(plan)
+            with self.subTest(address=resource["address"]), self.assertRaises(ValueError):
+                plan = copy.deepcopy(self.plan)
+                candidate = next(item for item in plan["resource_changes"] if item["address"] == resource["address"])
+                candidate["change"]["importing"] = {"id": "existing"}
+                check_plan(plan)
+
+    def test_logging_routes_cannot_capture_other_apps_drop_logs_or_export_elsewhere(self) -> None:
+        for resource_type in ("google_logging_project_sink", "google_logging_project_exclusion"):
+            for fields in (
+                {"filter": 'resource.type="cloud_run_revision"'},
+                {"filter": SERVICE_LOG_FILTER.replace("historicguide-backend", "portfolio")},
+                {"filter": SERVICE_LOG_FILTER + ' OR severity>=ERROR'},
+                {"disabled": True}, {"name": "_Default"}, {"project": "other-project"},
+            ):
+                with self.subTest(resource_type=resource_type, fields=fields), self.assertRaises(ValueError):
+                    plan = copy.deepcopy(self.plan)
+                    candidate = next(item for item in plan["resource_changes"] if item["type"] == resource_type)
+                    candidate["change"]["after"].update(fields)
+                    check_plan(plan)
+        sink = self.logging["google_logging_project_sink"]["change"]["after"]
+        for fields in (
+            {"destination": "storage.googleapis.com/other-bucket"},
+            {"unique_writer_identity": False}, {"exclusions": [{"filter": "severity<ERROR"}]},
+        ):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                original = copy.deepcopy(sink)
+                sink.update(fields)
+                try:
+                    check_plan(self.plan)
+                finally:
+                    sink.clear()
+                    sink.update(original)
+
+    def test_error_metric_scope_and_counting_cannot_be_changed(self) -> None:
+        metric = self.logging["google_logging_metric"]["change"]["after"]
+        for fields in (
+            {"filter": 'severity>=ERROR'}, {"disabled": True},
+            {"label_extractors": {"query": "EXTRACT(jsonPayload.query)"}},
+            {"metric_descriptor": [{"metric_kind": "GAUGE", "value_type": "INT64", "unit": "1"}]},
+        ):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                original = copy.deepcopy(metric)
+                metric.update(fields)
+                try:
+                    check_plan(self.plan)
+                finally:
+                    metric.clear()
+                    metric.update(original)
+
+    def test_alert_threshold_window_channels_and_labels_are_restricted(self) -> None:
+        for mutation in ("threshold", "window", "channels", "labels", "disabled"):
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                plan = copy.deepcopy(self.plan)
+                alert = next(item for item in plan["resource_changes"] if item["type"] == "google_monitoring_alert_policy")["change"]["after"]
+                threshold = alert["conditions"][0]["condition_threshold"][0]
+                if mutation == "threshold":
+                    threshold["threshold_value"] = 100
+                elif mutation == "window":
+                    threshold["aggregations"][0]["alignment_period"] = "3600s"
+                elif mutation == "channels":
+                    alert["notification_channels"] = ["projects/other/notificationChannels/123"]
+                elif mutation == "labels":
+                    alert["user_labels"]["env"] = "dev"
+                else:
+                    alert["enabled"] = False
+                check_plan(plan)
+
+    def test_logging_inputs_reject_wrong_environment_retention_and_channel_projects(self) -> None:
+        for name, value in (
+            ("environment", "dev"), ("log_retention_days", 365),
+            ("log_bucket_id", "_Default"), ("log_error_threshold_count", 0),
+            ("log_error_threshold_count", True), ("log_error_threshold_count", 2.5),
+            ("log_notification_channels", ["projects/other/notificationChannels/123"]),
+        ):
+            with self.subTest(name=name, value=value), self.assertRaises(ValueError):
+                plan = copy.deepcopy(self.plan)
+                plan["variables"][name]["value"] = value
+                check_plan(plan)
+
+    def test_configured_existing_notification_channels_and_threshold_are_allowed(self) -> None:
+        channel = "projects/basicrahgapp/notificationChannels/123"
+        self.plan["variables"]["log_notification_channels"]["value"] = [channel]
+        self.plan["variables"]["log_error_threshold_count"]["value"] = 10
+        alert = self.logging["google_monitoring_alert_policy"]["change"]["after"]
+        alert["notification_channels"] = [channel]
+        alert["conditions"][0]["condition_threshold"][0]["threshold_value"] = 9
+        check_plan(self.plan)
 
 
 if __name__ == "__main__":

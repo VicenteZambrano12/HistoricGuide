@@ -10,9 +10,7 @@ export function RomeMapCanvas() {
     tourPhase,
     gpsPosition,
     isWalking,
-    isChatPending,
-    isDemoReady,
-    isVoiceRecording,
+    isInteractionBusy,
     walkProgress,
     walkToStopIndex,
     confirmArrivalAtStop,
@@ -121,10 +119,12 @@ export function RomeMapCanvas() {
                 transform={`translate(${stop.coords.mapX}, ${stop.coords.mapY})`}
                 onClick={() => walkToStopIndex(index)}
                 role="button"
-                tabIndex={0}
+                tabIndex={isInteractionBusy ? -1 : 0}
+                aria-disabled={isInteractionBusy}
                 aria-label={t('mapStop', { order: stop.order, name: stop.name })}
                 aria-current={isSelected ? 'location' : undefined}
                 onKeyDown={(event) => {
+                  if (isInteractionBusy) return;
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
                     walkToStopIndex(index);
@@ -205,7 +205,7 @@ export function RomeMapCanvas() {
           <button
             type="button"
             className="rome-map__arrive-btn"
-            disabled={isWalking || isChatPending || isVoiceRecording || !isDemoReady}
+            disabled={isInteractionBusy}
             onClick={confirmArrivalAtStop}
           >
             {t(tourPhase === 'READY_TO_ARRIVE' ? 'arrivalButton' : 'replayArrival')}
